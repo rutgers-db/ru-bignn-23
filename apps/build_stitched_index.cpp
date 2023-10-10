@@ -230,6 +230,15 @@ stitch_indices_return_values stitch_label_indices(
     for (const auto &lbl : all_labels)
     {
         path curr_label_index_path(final_index_path_prefix + "_" + lbl);
+        if (!file_exists(curr_label_index_path)) {
+            if (label_id_to_orig_id_map[lbl].size()>0){
+                label_entry_points[lbl] = label_id_to_orig_id_map[lbl][0];
+            }
+            else{
+                label_entry_points[lbl] = 0;
+            }
+            continue;
+        }
         std::vector<std::vector<uint32_t>> curr_label_index;
         uint64_t curr_label_index_size;
         uint32_t curr_label_entry_point;
@@ -310,13 +319,14 @@ void prune_and_save(path final_index_path_prefix, path full_index_path_prefix, p
  * 2. the separate diskANN indices built for each label
  * 3. the '.data' file created while generating the indices
  */
-void clean_up_artifacts(path input_data_path, path final_index_path_prefix, label_set all_labels)
+void clean_up_artifacts(path input_data_path, path final_index_path_prefix, label_set all_labels, tsl::robin_map<std::string, uint32_t>& labels_to_number_of_points)
 {
     for (const auto &lbl : all_labels)
     {
         path curr_label_input_data_path(input_data_path + "_" + lbl);
         path curr_label_index_path(final_index_path_prefix + "_" + lbl);
         path curr_label_index_path_data(curr_label_index_path + ".data");
+        if (labels_to_number_of_points[lbl]<=1000) continue;
 
         if (std::remove(curr_label_index_path.c_str()) != 0)
             throw;
@@ -436,5 +446,5 @@ int main(int argc, char **argv)
     std::chrono::duration<double> index_time = std::chrono::high_resolution_clock::now() - index_timer;
     std::cout << "pruned/stitched graph generated in " << index_time.count() << " seconds" << std::endl;
 
-    clean_up_artifacts(input_data_path, final_index_path_prefix, all_labels);
+    clean_up_artifacts(input_data_path, final_index_path_prefix, all_labels,labels_to_number_of_points);
 }

@@ -143,6 +143,7 @@ inline tsl::robin_map<std::string, std::vector<uint32_t>> generate_label_specifi
 
         // write metadata
         uint32_t metadata[2] = {curr_num_pts, dimension};
+        assert(dimension>0);
         int return_value = write(label_input_data_fd, metadata, sizeof(uint32_t) * 2);
         if (return_value == -1)
         {

@@ -13,6 +13,9 @@ target_link_libraries(build_stitched_index ${PROJECT_NAME} ${DISKANN_TOOLS_TCMAL
 add_executable(search_memory_index search_memory_index.cpp)
 target_link_libraries(search_memory_index ${PROJECT_NAME} ${DISKANN_ASYNC_LIB} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} Boost::program_options)
 
+add_executable(search_multi_tag search_multi_tag.cpp)
+target_link_libraries(search_multi_tag ${PROJECT_NAME} ${DISKANN_ASYNC_LIB} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} Boost::program_options)
+
 add_executable(build_disk_index build_disk_index.cpp)
 target_link_libraries(build_disk_index ${PROJECT_NAME} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} ${DISKANN_ASYNC_LIB} Boost::program_options)
 
@@ -27,6 +30,12 @@ target_link_libraries(test_streaming_scenario ${PROJECT_NAME} ${DISKANN_TOOLS_TC
 
 add_executable(test_insert_deletes_consolidate test_insert_deletes_consolidate.cpp)
 target_link_libraries(test_insert_deletes_consolidate ${PROJECT_NAME} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} Boost::program_options)
+
+add_executable(find_connected_component find_connected_components.cpp)
+target_link_libraries(find_connected_component ${PROJECT_NAME} ${DISKANN_ASYNC_LIB} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} Boost::program_options)
+
+add_executable(degree_profiling degree_profiling.cpp)
+target_link_libraries(degree_profiling ${PROJECT_NAME} ${DISKANN_ASYNC_LIB} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} Boost::program_options)
 
 if (NOT MSVC)
     install(TARGETS build_memory_index

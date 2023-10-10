@@ -759,7 +759,7 @@ bool Index<T, TagT, LabelT>::detect_common_filters(uint32_t point_id, bool searc
 template <typename T, typename TagT, typename LabelT>
 std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point(
     const T *query, const uint32_t Lsize, const std::vector<uint32_t> &init_ids, InMemQueryScratch<T> *scratch,
-    bool use_filter, const std::vector<LabelT> &filter_label, bool search_invocation)
+    bool use_filter, const std::vector<LabelT> &filter_label, bool search_invocation, uint32_t location)
 {
     std::vector<Neighbor> &expanded_nodes = scratch->pool();
     NeighborPriorityQueue &best_L_nodes = scratch->best_l_nodes();
@@ -880,6 +880,7 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point(
     {
         auto nbr = best_L_nodes.closest_unexpanded();
         auto n = nbr.id;
+        if (n==location) continue;
 
         // Add node to expanded nodes to create pool for prune later
         if (!search_invocation)
@@ -978,13 +979,20 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune(int location, uint32_t L
                                                         InMemQueryScratch<T> *scratch, bool use_filter,
                                                         uint32_t filteredLindex)
 {
-    const std::vector<uint32_t> init_ids = get_init_ids();
+    std::vector<uint32_t> init_ids = get_init_ids();
     const std::vector<LabelT> unused_filter_label;
+    if (init_ids.size()==1 && init_ids[0]==location){
+        auto neighbors = _graph_store->get_neighbours(location);
+        init_ids.clear();
+        for (auto id:neighbors){
+            init_ids.emplace_back(id);
+        }
+    }
 
     if (!use_filter)
     {
         _data_store->get_vector(location, scratch->aligned_query());
-        iterate_to_fixed_point(scratch->aligned_query(), Lindex, init_ids, scratch, false, unused_filter_label, false);
+        iterate_to_fixed_point(scratch->aligned_query(), Lindex, init_ids, scratch, false, unused_filter_label, false,location);
     }
     else
     {
@@ -994,7 +1002,7 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune(int location, uint32_t L
 
         _data_store->get_vector(location, scratch->aligned_query());
         iterate_to_fixed_point(scratch->aligned_query(), filteredLindex, filter_specific_start_nodes, scratch, true,
-                               _pts_to_labels[location], false);
+                               _pts_to_labels[location], false,location);
     }
 
     auto &pool = scratch->pool();
@@ -1025,12 +1033,110 @@ void Index<T, TagT, LabelT>::occlude_list(const uint32_t location, std::vector<N
                                           InMemQueryScratch<T> *scratch,
                                           const tsl::robin_set<uint32_t> *const delete_set_ptr)
 {
+    assert(pool.size() > 0);
     if (pool.size() == 0)
         return;
 
     // Truncate pool at maxc and initialize scratch spaces
     assert(std::is_sorted(pool.begin(), pool.end()));
     assert(result.size() == 0);
+
+    if (_filtered_index){
+        std::vector<LabelT>& cur_labels = _pts_to_labels[location];
+        if (cur_labels.size()<_labels.size()-1){
+            uint32_t cur_label_num = cur_labels.size();
+
+            
+            // arrange pool based on labels and the number of points in each label
+            std::vector<NeighborPriorityQueue> labels_pq(cur_labels.size(),NeighborPriorityQueue(pool.size()));
+            for (auto& neigh:pool){
+                // Get the intersection of current_label and neighbor's label
+                uint32_t neighbor_id = neigh.id;
+                std::vector<LabelT>& neighbor_label = _pts_to_labels[neighbor_id];
+                for (int i=0;i<cur_label_num;++i){
+                    if (std::find(neighbor_label.begin(),neighbor_label.end(),cur_labels[i])!=neighbor_label.end()){
+                        labels_pq[i].insert(neigh);
+                    }
+                }
+            }
+
+
+            // calculate how much neighbors are assigned to each label candidates
+            std::vector<float> fraction(cur_labels.size());
+            float size_sum = 0;
+            for (int i=0;i<cur_label_num;i++){
+                if (_labels_pts_count[cur_labels[i]]>1000){
+                    fraction[i] = std::sqrt(_labels_pts_count[cur_labels[i]]);
+                }
+                else{
+                    fraction[i] = 0;
+                }
+                
+                size_sum +=fraction[i];
+            }
+            uint32_t neighbor_count = 0;
+            std::vector<uint32_t> label_neighbor_size(cur_label_num,0);
+            for (int i=0;i<cur_label_num;i++){
+                label_neighbor_size[i] = fraction[i]/size_sum*maxc;
+                if (label_neighbor_size[i]>labels_pq[i].size()){
+                    label_neighbor_size[i] = labels_pq[i].size();
+                }
+                neighbor_count +=label_neighbor_size[i];
+                // if (i>0){
+                //     label_neighbor_size[i] += label_neighbor_size[i-1];
+                // }
+            }
+
+            std::vector<uint32_t> visit_set(pool.size());
+            std::vector<Neighbor> temp_neighbor(pool);
+            std::vector<uint32_t> label_pq_pointer(cur_label_num,0);
+            std::vector<Neighbor>().swap(pool);
+            uint32_t cur_label_id = 0;
+            uint32_t pointer = 0;
+            while (pointer < maxc){
+                bool find_not_saturate = false;
+                uint32_t find_not_saturate_count = 0;
+                while (!find_not_saturate){
+                    if (label_pq_pointer[cur_label_id] >= label_neighbor_size[cur_label_id]){ // if it reach the bound
+                        find_not_saturate_count++;
+                    }
+                    else if (std::find(visit_set.begin(),visit_set.end(),labels_pq[cur_label_id][label_pq_pointer[cur_label_id]].id)!=visit_set.end()){ 
+                        // if current pointer is a visited neighbor, then empty the saturate_count
+                        label_pq_pointer[cur_label_id]++;
+                        find_not_saturate_count = 0;
+                    }
+                    else{
+                        // add the current neighbor to pool
+                        pool.emplace_back(labels_pq[cur_label_id][label_pq_pointer[cur_label_id]]);
+                        visit_set.emplace_back(labels_pq[cur_label_id][label_pq_pointer[cur_label_id]].id);
+                        find_not_saturate = true;
+                        find_not_saturate_count = 0;
+                        pointer++;
+                    }
+                    cur_label_id = (cur_label_id + 1) % cur_label_num;
+                    if (find_not_saturate_count > cur_label_num){
+                        break;
+                    }
+                }
+                if (!find_not_saturate){
+                    break;
+                }
+            }
+            // fill the pool to maxc
+            for (int i=0;i<temp_neighbor.size() && pointer < maxc;i++){
+                Neighbor& neigh = temp_neighbor[i];
+                if (std::find(visit_set.begin(),visit_set.end(),neigh.id)==visit_set.end()){
+                    visit_set.emplace_back(neigh.id);
+                    pointer++;
+                    pool.emplace_back(neigh);
+                }
+            }
+        }
+
+    }
+    
+
+
     if (pool.size() > maxc)
         pool.resize(maxc);
     std::vector<float> &occlude_factor = scratch->occlude_factor();
@@ -1040,6 +1146,7 @@ void Index<T, TagT, LabelT>::occlude_list(const uint32_t location, std::vector<N
     // Initialize occlude_factor to pool.size() many 0.0f values for correctness
     occlude_factor.insert(occlude_factor.end(), pool.size(), 0.0f);
 
+
     float cur_alpha = 1;
     while (cur_alpha <= alpha && result.size() < degree)
     {
@@ -1047,36 +1154,38 @@ void Index<T, TagT, LabelT>::occlude_list(const uint32_t location, std::vector<N
         // denote pruned out entries which we can skip in later rounds.
         float eps = cur_alpha + 0.01f;
 
-        for (auto iter = pool.begin(); result.size() < degree && iter != pool.end(); ++iter)
+        for (uint32_t iter = 0; result.size() < degree && iter < pool.size(); ++iter)
         {
-            if (occlude_factor[iter - pool.begin()] > cur_alpha)
+            Neighbor& neigh1 = pool[iter];
+            if (occlude_factor[iter] > cur_alpha)
             {
                 continue;
             }
             // Set the entry to float::max so that is not considered again
-            occlude_factor[iter - pool.begin()] = std::numeric_limits<float>::max();
+            occlude_factor[iter] = std::numeric_limits<float>::max();
             // Add the entry to the result if its not been deleted, and doesn't
             // add a self loop
-            if (delete_set_ptr == nullptr || delete_set_ptr->find(iter->id) == delete_set_ptr->end())
+            if (delete_set_ptr == nullptr || delete_set_ptr->find(neigh1.id) == delete_set_ptr->end())
             {
-                if (iter->id != location)
+                if (neigh1.id != location)
                 {
-                    result.push_back(iter->id);
+                    result.push_back(neigh1.id);
                 }
             }
 
             // Update occlude factor for points from iter+1 to pool.end()
-            for (auto iter2 = iter + 1; iter2 != pool.end(); iter2++)
+            for (uint32_t iter2 = iter + 1; iter2 < pool.size(); iter2++)
             {
-                auto t = iter2 - pool.begin();
+                auto t = iter2;
+                Neighbor& neigh2 = pool[iter2];
                 if (occlude_factor[t] > alpha)
                     continue;
 
                 bool prune_allowed = true;
                 if (_filtered_index)
                 {
-                    uint32_t a = iter->id;
-                    uint32_t b = iter2->id;
+                    uint32_t a = neigh1.id;
+                    uint32_t b = neigh2.id;
                     for (auto &x : _pts_to_labels[b])
                     {
                         if (std::find(_pts_to_labels[a].begin(), _pts_to_labels[a].end(), x) == _pts_to_labels[a].end())
@@ -1090,16 +1199,16 @@ void Index<T, TagT, LabelT>::occlude_list(const uint32_t location, std::vector<N
                 if (!prune_allowed)
                     continue;
 
-                float djk = _data_store->get_distance(iter2->id, iter->id);
+                float djk = _data_store->get_distance(neigh2.id, neigh1.id);
                 if (_dist_metric == diskann::Metric::L2 || _dist_metric == diskann::Metric::COSINE)
                 {
                     occlude_factor[t] = (djk == 0) ? std::numeric_limits<float>::max()
-                                                   : std::max(occlude_factor[t], iter2->distance / djk);
+                                                   : std::max(occlude_factor[t], neigh2.distance / djk);
                 }
                 else if (_dist_metric == diskann::Metric::INNER_PRODUCT)
                 {
                     // Improvization for flipping max and min dist for MIPS
-                    float x = -iter2->distance;
+                    float x = -neigh2.distance;
                     float y = -djk;
                     if (y > cur_alpha * x)
                     {
@@ -1124,6 +1233,7 @@ void Index<T, TagT, LabelT>::prune_neighbors(const uint32_t location, std::vecto
                                              const uint32_t max_candidate_size, const float alpha,
                                              std::vector<uint32_t> &pruned_list, InMemQueryScratch<T> *scratch)
 {
+    assert(pool.size()>0);
     if (pool.size() == 0)
     {
         // if the pool is empty, behave like a noop
@@ -1259,6 +1369,9 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
         _start = calculate_entry_point();
 
     diskann::Timer link_timer;
+    // memset(_labels_pts_count.data(),0,sizeof(uint32_t)*_labels_pts_count.size());
+    // std::cout<<"Empty _labels_pts_count"<<std::endl;
+    // std::mutex mtx;
 
 #pragma omp parallel for schedule(dynamic, 2048)
     for (int64_t node_ctr = 0; node_ctr < (int64_t)(visit_order.size()); node_ctr++)
@@ -1271,6 +1384,11 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
         std::vector<uint32_t> pruned_list;
         if (_filtered_index)
         {
+            // mtx.lock();
+            // for (auto& x:_pts_to_labels[node]){
+            //     _labels_pts_count[x]++;
+            // }
+            // mtx.unlock();
             search_for_point_and_prune(node, _indexingQueueSize, pruned_list, scratch, _filtered_index,
                                        _filterIndexingQueueSize);
         }
@@ -1741,7 +1859,7 @@ std::unordered_map<std::string, LabelT> Index<T, TagT, LabelT>::load_label_map(c
         getline(iss, token, '\t');
         label_str = token;
         getline(iss, token, '\t');
-        token_as_num = (LabelT)std::stoul(token);
+        token_as_num = (uint32_t)std::stoul(token);
         string_to_int_mp[label_str] = token_as_num;
     }
     return string_to_int_mp;
@@ -1813,6 +1931,12 @@ void Index<T, TagT, LabelT>::parse_label_file(const std::string &label_file, siz
     }
     num_points = (size_t)line_cnt;
     diskann::cout << "Identified " << _labels.size() << " distinct label(s)" << std::endl;
+    _labels_pts_count = std::vector<uint32_t>(_labels.size()+1,0);
+    for (uint32_t i=0;i<num_points;i++){
+        for (auto& x:_pts_to_labels[i]){
+            _labels_pts_count[x]++;
+        }
+    }
 }
 
 template <typename T, typename TagT, typename LabelT>
@@ -2011,6 +2135,28 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::_search_with_filters(const
 }
 
 template <typename T, typename TagT, typename LabelT>
+std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::_search_with_multi_filters(const DataType &query,
+                                                                           const std::vector<std::string> &query_filters, const size_t K,
+                                                                           const uint32_t L, std::any &indices,
+                                                                           float *distances)
+{
+    if (typeid(uint64_t *) == indices.type())
+    {
+        auto ptr = std::any_cast<uint64_t *>(indices);
+        return this->search_with_multi_filters(std::any_cast<T *>(query), query_filters, K, L, ptr, distances);
+    }
+    else if (typeid(uint32_t *) == indices.type())
+    {
+        auto ptr = std::any_cast<uint32_t *>(indices);
+        return this->search_with_multi_filters(std::any_cast<T *>(query), query_filters, K, L, ptr, distances);
+    }
+    else
+    {
+        throw ANNException("Error: Id type can only be uint64_t or uint32_t.", -1);
+    }
+}
+
+template <typename T, typename TagT, typename LabelT>
 template <typename IdType>
 std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::search_with_filters(const T *query, const LabelT &filter_label,
                                                                           const size_t K, const uint32_t L,
@@ -2082,6 +2228,96 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::search_with_filters(const 
         diskann::cerr << "Found fewer than K elements for query" << std::endl;
     }
 
+    return retval;
+}
+
+template <typename T, typename TagT, typename LabelT>
+template <typename IdType>
+std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::search_with_multi_filters(const T *query, const std::vector<std::string> &query_filters,
+                                                                          const size_t K, const uint32_t L,
+                                                                          IdType *indices, float *distances)
+{
+    std::pair<uint32_t, uint32_t> retval = {0,0};
+    uint32_t filter_num = query_filters.size();
+    uint32_t real_K = K*filter_num;
+    uint32_t real_L = std::max(L, real_K);
+    std::vector<std::vector<IdType>> result_id(filter_num,std::vector<IdType>(real_K,0));
+    std::vector<std::vector<float>> result_distance(filter_num,std::vector<float>(real_K,-1));
+    std::vector<LabelT> actual_filters;
+    
+    // search for each filter
+    for (uint32_t filter_id=0;filter_id<filter_num;filter_id++){
+        std::string filter = query_filters[filter_id];
+        LabelT actual_filter = get_converted_label(filter);
+        actual_filters.emplace_back(actual_filter);
+        if (_labels_pts_count[actual_filter]>1000){
+            auto cur_retval = search_with_filters(query,actual_filter,real_K,real_L,result_id[filter_id].data(),result_distance[filter_id].data());
+            retval.first +=cur_retval.first;
+            retval.second += cur_retval.second;
+        }
+        else{
+            std::priority_queue<std::pair<float,IdType>> pq;
+            for (uint32_t i=0;i<_max_points;i++){
+                if (std::find(_pts_to_labels[i].begin(),_pts_to_labels[i].end(),actual_filter)!=_pts_to_labels[i].end()){
+                    float distance = _data_store->get_distance(query,i);
+                    pq.push(std::pair<float,IdType>(distance,(IdType)i));
+                    if (pq.size()>real_K){
+                        pq.pop();
+                    }
+                    retval.second++;
+                }
+            }
+            int pos = pq.size()-1;
+            while (pos>=0){
+                auto pair = pq.top();
+                pq.pop();
+                result_id[filter_id][pos] = pair.second;
+                result_distance[filter_id][pos] = pair.first;
+                pos--;
+            }
+        }
+    }
+    //combine the result together
+    std::priority_queue<std::pair<float,IdType>> pq;
+    std::vector<uint32_t> visit_set;
+    std::sort(actual_filters.begin(),actual_filters.end());
+    for (uint32_t i=0;i<filter_num;i++){
+        for (uint32_t j=0;j<real_K;j++){
+            uint32_t candidate_id = result_id[i][j];
+            if (result_distance[i][j]>=0 && std::find(visit_set.begin(),visit_set.end(),candidate_id)==visit_set.end()){
+                visit_set.emplace_back(candidate_id);
+                // check tag
+                auto& curr_tag = _pts_to_labels[candidate_id];
+                bool flag = false;
+                if (_use_universal_label){
+                    if (std::find(curr_tag.begin(),curr_tag.end(),_universal_label)!=curr_tag.end()){
+                        flag = true;
+                    }
+                }
+                if (!flag){
+                    std::vector<LabelT> common_filters;
+                    std::set_intersection(curr_tag.begin(),curr_tag.end(),actual_filters.begin(),actual_filters.end(),std::back_inserter(common_filters));
+                    if (common_filters.size()==actual_filters.size()){
+                        flag = true;
+                    }
+                }
+                if (flag){
+                    pq.push(std::pair<float,IdType>(result_distance[i][j],(IdType)candidate_id));
+                    if (pq.size()>K){
+                        pq.pop();
+                    }
+                }
+            }
+        }
+    }
+    int pos = pq.size() -1;
+    while (pos>=0){
+        auto pair = pq.top();
+        pq.pop();
+        indices[pos] = pair.second;
+        distances[pos] = pair.first;
+        pos--;
+    }
     return retval;
 }
 
@@ -3333,5 +3569,82 @@ template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<int8_t, uint32_t,
               float *distances);
 template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<int8_t, uint32_t, uint16_t>::search_with_filters<
     uint32_t>(const int8_t *query, const uint16_t &filter_label, const size_t K, const uint32_t L, uint32_t *indices,
+              float *distances);
+
+
+
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<float, uint64_t, uint32_t>::search_with_multi_filters<
+    uint64_t>(const float *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint64_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<float, uint64_t, uint32_t>::search_with_multi_filters<
+    uint32_t>(const float *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint32_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<uint8_t, uint64_t, uint32_t>::search_with_multi_filters<
+    uint64_t>(const uint8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint64_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<uint8_t, uint64_t, uint32_t>::search_with_multi_filters<
+    uint32_t>(const uint8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint32_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<int8_t, uint64_t, uint32_t>::search_with_multi_filters<
+    uint64_t>(const int8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint64_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<int8_t, uint64_t, uint32_t>::search_with_multi_filters<
+    uint32_t>(const int8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint32_t *indices,
+              float *distances);
+// TagT==uint32_t
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<float, uint32_t, uint32_t>::search_with_multi_filters<
+    uint64_t>(const float *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint64_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<float, uint32_t, uint32_t>::search_with_multi_filters<
+    uint32_t>(const float *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint32_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<uint8_t, uint32_t, uint32_t>::search_with_multi_filters<
+    uint64_t>(const uint8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint64_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<uint8_t, uint32_t, uint32_t>::search_with_multi_filters<
+    uint32_t>(const uint8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint32_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<int8_t, uint32_t, uint32_t>::search_with_multi_filters<
+    uint64_t>(const int8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint64_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<int8_t, uint32_t, uint32_t>::search_with_multi_filters<
+    uint32_t>(const int8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint32_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<float, uint64_t, uint16_t>::search_with_multi_filters<
+    uint64_t>(const float *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint64_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<float, uint64_t, uint16_t>::search_with_multi_filters<
+    uint32_t>(const float *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint32_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<uint8_t, uint64_t, uint16_t>::search_with_multi_filters<
+    uint64_t>(const uint8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint64_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<uint8_t, uint64_t, uint16_t>::search_with_multi_filters<
+    uint32_t>(const uint8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint32_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<int8_t, uint64_t, uint16_t>::search_with_multi_filters<
+    uint64_t>(const int8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint64_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<int8_t, uint64_t, uint16_t>::search_with_multi_filters<
+    uint32_t>(const int8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint32_t *indices,
+              float *distances);
+// TagT==uint32_t
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<float, uint32_t, uint16_t>::search_with_multi_filters<
+    uint64_t>(const float *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint64_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<float, uint32_t, uint16_t>::search_with_multi_filters<
+    uint32_t>(const float *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint32_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<uint8_t, uint32_t, uint16_t>::search_with_multi_filters<
+    uint64_t>(const uint8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint64_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<uint8_t, uint32_t, uint16_t>::search_with_multi_filters<
+    uint32_t>(const uint8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint32_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<int8_t, uint32_t, uint16_t>::search_with_multi_filters<
+    uint64_t>(const int8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint64_t *indices,
+              float *distances);
+template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<int8_t, uint32_t, uint16_t>::search_with_multi_filters<
+    uint32_t>(const int8_t *query, const std::vector<std::string> &query_filters, const size_t K, const uint32_t L, uint32_t *indices,
               float *distances);
 } // namespace diskann

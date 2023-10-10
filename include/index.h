@@ -50,6 +50,9 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
      **************************************************************************/
 
   public:
+    std::vector<uint32_t> get_neighbor(uint32_t p){
+        return _graph_store->get_neighbours(p);
+    }
     // Call this when creating and passing Index Config is inconvenient.
     DISKANN_DLLEXPORT Index(Metric m, const size_t dim, const size_t max_points,
                             const std::shared_ptr<IndexWriteParameters> index_parameters,
@@ -138,6 +141,11 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
                                                                         const size_t K, const uint32_t L,
                                                                         IndexType *indices, float *distances);
 
+    template <typename IndexType>
+    DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> search_with_multi_filters(const T *query, const std::vector<std::string> &query_filters,
+                                                                        const size_t K, const uint32_t L,
+                                                                        IndexType *indices, float *distances);
+
     // Will fail if tag already in the index or if tag=0.
     DISKANN_DLLEXPORT int insert_point(const T *point, const TagT tag);
 
@@ -200,6 +208,10 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
                                                                const std::string &filter_label_raw, const size_t K,
                                                                const uint32_t L, std::any &indices,
                                                                float *distances) override;
+    virtual std::pair<uint32_t, uint32_t> _search_with_multi_filters(const DataType &query,
+                                                               const std::vector<std::string> &query_filters, const size_t K,
+                                                               const uint32_t L, std::any &indices,
+                                                               float *distances) override;                                                               
 
     virtual int _insert_point(const DataType &data_point, const TagType tag) override;
 
@@ -244,7 +256,7 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     std::pair<uint32_t, uint32_t> iterate_to_fixed_point(const T *node_coords, const uint32_t Lindex,
                                                          const std::vector<uint32_t> &init_ids,
                                                          InMemQueryScratch<T> *scratch, bool use_filter,
-                                                         const std::vector<LabelT> &filters, bool search_invocation);
+                                                         const std::vector<LabelT> &filters, bool search_invocation, uint32_t location=-1);
 
     void search_for_point_and_prune(int location, uint32_t Lindex, std::vector<uint32_t> &pruned_list,
                                     InMemQueryScratch<T> *scratch, bool use_filter = false,
@@ -318,6 +330,7 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     DISKANN_DLLEXPORT size_t load_delete_set(const std::string &filename);
 #endif
 
+
   private:
     // Distance functions
     Metric _dist_metric = diskann::L2;
@@ -364,6 +377,7 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     bool _filtered_index = false;
     std::vector<std::vector<LabelT>> _pts_to_labels;
     tsl::robin_set<LabelT> _labels;
+    std::vector<uint32_t> _labels_pts_count;
     std::string _labels_file;
     std::unordered_map<LabelT, uint32_t> _label_to_medoid_id;
     std::unordered_map<uint32_t, uint32_t> _medoid_counts;
