@@ -108,6 +108,58 @@ void handle_args(int argc, char **argv, std::string &data_type, path &input_data
     }
 }
 
+void load_full_index(path final_index_path_prefix, path input_data_path, uint64_t &final_index_size,
+                    std::vector<std::vector<uint32_t>>& stitched_graph,
+                    tsl::robin_map<std::string, uint32_t>& entry_points, std::string &universal_label,
+                    path label_data_path)
+{
+    std::ifstream labels_to_medoids_reader;
+    labels_to_medoids_reader.open(final_index_path_prefix + "_labels_to_medoids.txt");
+    std::string line, token1, token2;
+    while (std::getline(labels_to_medoids_reader,line)){
+        std::istringstream current_labels_comma_separated(line);
+        std::getline(current_labels_comma_separated,token1,',');
+        std::getline(current_labels_comma_separated,token2,',');
+        entry_points.emplace(token1, std::stoul(token2));
+    }
+    labels_to_medoids_reader.close();
+
+    std::ifstream universal_label_writer;
+    universal_label_writer.exceptions(std::ios::badbit | std::ios::failbit);
+    universal_label_writer.open(final_index_path_prefix + "_universal_label.txt");
+    universal_label_writer >> universal_label;
+    universal_label_writer.close();
+
+
+    uint32_t index_max_observed_degree = 0, index_entry_point = 0;
+    uint64_t index_num_frozen_points = 0;
+    std::ifstream stitched_graph_reader;
+    stitched_graph_reader.open(final_index_path_prefix, std::ios_base::binary);
+    stitched_graph_reader.read((char*)&final_index_size, sizeof(uint64_t));
+    stitched_graph_reader.read((char*)&index_max_observed_degree, sizeof(uint32_t));
+    stitched_graph_reader.read((char*)&index_entry_point, sizeof(uint32_t));
+    stitched_graph_reader.read((char*)&index_num_frozen_points,sizeof(uint64_t));
+    const size_t METADATA = 2 * sizeof(uint64_t) + 2 * sizeof(uint32_t);
+    size_t bytes_read = METADATA;
+    while (bytes_read < final_index_size){
+        uint32_t current_node_num_neighbors = 0;
+        stitched_graph_reader.read((char*)&current_node_num_neighbors, sizeof(uint32_t));
+        bytes_read += sizeof(uint32_t);
+        if (current_node_num_neighbors > 0){
+            std::vector<uint32_t> neighbor_buffer(current_node_num_neighbors);
+            stitched_graph_reader.read((char*)neighbor_buffer.data(),sizeof(uint32_t)*current_node_num_neighbors);
+            bytes_read += sizeof(uint32_t)*current_node_num_neighbors;
+            stitched_graph.push_back(neighbor_buffer);
+        }
+        else{
+            std::vector<uint32_t> neighbor_buffer;
+            stitched_graph.push_back(neighbor_buffer);
+        }
+    }
+    stitched_graph_reader.close();
+
+}
+
 /*
  * Custom index save to write the in-memory index to disk.
  * Also writes required files for diskANN API -
@@ -328,12 +380,9 @@ void clean_up_artifacts(path input_data_path, path final_index_path_prefix, labe
         path curr_label_index_path_data(curr_label_index_path + ".data");
         if (labels_to_number_of_points[lbl]<=1000) continue;
 
-        if (std::remove(curr_label_index_path.c_str()) != 0)
-            throw;
-        if (std::remove(curr_label_input_data_path.c_str()) != 0)
-            throw;
-        if (std::remove(curr_label_index_path_data.c_str()) != 0)
-            throw;
+        std::remove(curr_label_index_path.c_str());
+        std::remove(curr_label_input_data_path.c_str());
+        std::remove(curr_label_index_path_data.c_str());
     }
 }
 
@@ -353,7 +402,7 @@ int main(int argc, char **argv)
     path labels_file_to_use = final_index_path_prefix + "_label_formatted.txt";
     path labels_map_file = final_index_path_prefix + "_labels_map.txt";
 
-    convert_labels_string_to_int(label_data_path, labels_file_to_use, labels_map_file, universal_label);
+    // convert_labels_string_to_int(label_data_path, labels_file_to_use, labels_map_file, universal_label);
 
     // 2. parse label file and create necessary data structures
     std::vector<label_set> point_ids_to_labels;
@@ -429,6 +478,8 @@ int main(int argc, char **argv)
     // 5a. save the stitched graph to disk
     save_full_index(full_index_path_prefix, input_data_path, stitched_graph_size, stitched_graph, label_entry_points,
                     universal_label, labels_file_to_use);
+    // load_full_index(full_index_path_prefix,input_data_path,stitched_graph_size,stitched_graph, label_entry_points,universal_label,labels_file_to_use);
+
 
     // 6. run a prune on the stitched index, and save to disk
     if (data_type == "uint8")

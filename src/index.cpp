@@ -1023,7 +1023,7 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune(int location, uint32_t L
 
     prune_neighbors(location, pool, pruned_list, scratch);
 
-    assert(!pruned_list.empty());
+    // assert(!pruned_list.empty());
     assert(_graph_store->get_total_points() == _max_points + _num_frozen_pts);
 }
 
@@ -1233,7 +1233,7 @@ void Index<T, TagT, LabelT>::prune_neighbors(const uint32_t location, std::vecto
                                              const uint32_t max_candidate_size, const float alpha,
                                              std::vector<uint32_t> &pruned_list, InMemQueryScratch<T> *scratch)
 {
-    assert(pool.size()>0);
+    // assert(pool.size()>0);
     if (pool.size() == 0)
     {
         // if the pool is empty, behave like a noop
@@ -1275,7 +1275,7 @@ void Index<T, TagT, LabelT>::inter_insert(uint32_t n, std::vector<uint32_t> &pru
 {
     const auto &src_pool = pruned_list;
 
-    assert(!src_pool.empty());
+    // assert(!src_pool.empty());
 
     for (auto des : src_pool)
     {
@@ -1513,6 +1513,46 @@ void Index<T, TagT, LabelT>::prune_all_neighbors(const uint32_t max_degree, cons
                       << "  avg:" << (float)total / (float)(_nd + _num_frozen_pts) << "  min:" << min
                       << "  count(deg<2):" << cnt << std::endl;
     }
+    // select start point for each point
+    std::unordered_map<LabelT,std::pair<uint32_t, uint32_t>> bsf_start_point;
+    std::mutex mtx;
+    #pragma omp parallel for
+    for (uint32_t i=0;i<_max_points;i++){
+        auto neighbor_list = get_neighbor(i);
+        std::unordered_map<LabelT,uint32_t> label_to_degree;
+        for (auto& neighbor: neighbor_list){
+            for (auto& curr_label: _pts_to_labels[neighbor]){
+                if (label_to_degree.find(curr_label)==label_to_degree.end()){
+                    label_to_degree[curr_label] = 1;
+                }
+                else{
+                    label_to_degree[curr_label]++;
+                }
+            }
+        }
+        for (auto& label_degree_count: label_to_degree){
+            LabelT curr_label = label_degree_count.first;
+            uint32_t degree = label_degree_count.second;
+            if (std::find(_pts_to_labels[i].begin(),_pts_to_labels[i].end(),curr_label)==_pts_to_labels[i].end())
+                continue;
+            mtx.lock();
+            if (bsf_start_point.find(curr_label)==bsf_start_point.end()){
+                bsf_start_point[curr_label] = std::pair<uint32_t, uint32_t>(i,degree);
+            }
+            else{
+                auto& p = bsf_start_point[curr_label];
+                if (degree > p.second){
+                    bsf_start_point[curr_label] = std::pair<uint32_t, uint32_t>(i,degree);
+                }
+            }
+            mtx.unlock();
+        }
+    }
+    
+    for (auto& label_to_best_ep: bsf_start_point){
+        _label_to_medoid_id[label_to_best_ep.first] = label_to_best_ep.second.first;
+    }
+    
 }
 
 // REFACTOR

@@ -169,6 +169,8 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     DISKANN_DLLEXPORT void prune_all_neighbors(const uint32_t max_degree, const uint32_t max_occlusion,
                                                const float alpha);
 
+    // DISKANN_DLLEXPORT void improve_connectivity(const uint32_t max_degree, const uint32_t candidate_number, const uint32_t efSearch)
+
     DISKANN_DLLEXPORT bool is_index_saved();
 
     // repositions frozen points to the end of _data - if they have been moved
