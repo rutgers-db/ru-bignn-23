@@ -19,6 +19,7 @@
 #include "parameters.h"
 #include "utils.h"
 #include "program_options_utils.hpp"
+#include "math_utils.h"
 
 namespace po = boost::program_options;
 typedef std::tuple<std::vector<std::vector<uint32_t>>, uint64_t> stitch_indices_return_values;
@@ -110,7 +111,7 @@ void handle_args(int argc, char **argv, std::string &data_type, path &input_data
 
 void load_full_index(path final_index_path_prefix, path input_data_path, uint64_t &final_index_size,
                     std::vector<std::vector<uint32_t>>& stitched_graph,
-                    tsl::robin_map<std::string, uint32_t>& entry_points, std::string &universal_label,
+                    tsl::robin_map<std::string, std::vector<uint32_t>>& entry_points, std::string &universal_label,
                     path label_data_path)
 {
     std::ifstream labels_to_medoids_reader;
@@ -118,9 +119,12 @@ void load_full_index(path final_index_path_prefix, path input_data_path, uint64_
     std::string line, token1, token2;
     while (std::getline(labels_to_medoids_reader,line)){
         std::istringstream current_labels_comma_separated(line);
-        std::getline(current_labels_comma_separated,token1,',');
-        std::getline(current_labels_comma_separated,token2,',');
-        entry_points.emplace(token1, std::stoul(token2));
+        std::getline(current_labels_comma_separated,token1,':');
+        std::vector<uint32_t> current_medoids;
+        while (std::getline(current_labels_comma_separated,token2,',')){
+            current_medoids.push_back(std::stoul(token2));
+        }
+        entry_points[token1] = current_medoids;
     }
     labels_to_medoids_reader.close();
 
@@ -170,7 +174,7 @@ void load_full_index(path final_index_path_prefix, path input_data_path, uint64_
  */
 void save_full_index(path final_index_path_prefix, path input_data_path, uint64_t final_index_size,
                      std::vector<std::vector<uint32_t>> stitched_graph,
-                     tsl::robin_map<std::string, uint32_t> entry_points, std::string universal_label,
+                     tsl::robin_map<std::string, std::vector<uint32_t>> entry_points, std::string universal_label,
                      path label_data_path)
 {
     // aux. file 1
@@ -200,8 +204,20 @@ void save_full_index(path final_index_path_prefix, path input_data_path, uint64_
     std::ofstream labels_to_medoids_writer;
     labels_to_medoids_writer.exceptions(std::ios::badbit | std::ios::failbit);
     labels_to_medoids_writer.open(final_index_path_prefix + "_labels_to_medoids.txt");
-    for (auto iter : entry_points)
-        labels_to_medoids_writer << iter.first << ", " << iter.second << std::endl;
+    for (auto& iter:entry_points){
+        labels_to_medoids_writer << iter.first << ":";
+        std::vector<uint32_t> mediod_vector = iter.second;
+        for (uint32_t ii=0;ii<mediod_vector.size();++ii){
+            if (ii==mediod_vector.size()-1){
+                labels_to_medoids_writer<<mediod_vector[ii]<<std::endl;
+            }
+            else{
+                labels_to_medoids_writer<<mediod_vector[ii]<<",";
+            }
+        }
+    }
+    // for (auto iter : entry_points)
+    //     labels_to_medoids_writer << iter.first << ", " << iter.second << std::endl;
     labels_to_medoids_writer.close();
 
     // aux. file 4 (only if we're using a universal label)
@@ -272,8 +288,8 @@ template <typename T>
 stitch_indices_return_values stitch_label_indices(
     path final_index_path_prefix, uint32_t total_number_of_points, label_set all_labels,
     tsl::robin_map<std::string, uint32_t> labels_to_number_of_points,
-    tsl::robin_map<std::string, uint32_t> &label_entry_points,
-    tsl::robin_map<std::string, std::vector<uint32_t>> label_id_to_orig_id_map)
+    tsl::robin_map<std::string, std::vector<uint32_t>> &label_entry_points,
+    tsl::robin_map<std::string, std::vector<uint32_t>> label_id_to_orig_id_map, uint32_t num_start_point=5)
 {
     size_t final_index_size = 0;
     std::vector<std::vector<uint32_t>> stitched_graph(total_number_of_points);
@@ -284,10 +300,10 @@ stitch_indices_return_values stitch_label_indices(
         path curr_label_index_path(final_index_path_prefix + "_" + lbl);
         if (!file_exists(curr_label_index_path)) {
             if (label_id_to_orig_id_map[lbl].size()>0){
-                label_entry_points[lbl] = label_id_to_orig_id_map[lbl][0];
+                label_entry_points[lbl] = std::vector<uint32_t>(1,label_id_to_orig_id_map[lbl][0]);
             }
             else{
-                label_entry_points[lbl] = 0;
+                label_entry_points[lbl] = std::vector<uint32_t>(1,0);
             }
             continue;
         }
@@ -297,8 +313,46 @@ stitch_indices_return_values stitch_label_indices(
 
         std::tie(curr_label_index, curr_label_index_size) =
             diskann::load_label_index(curr_label_index_path, labels_to_number_of_points[lbl]);
-        curr_label_entry_point = (uint32_t)random(0, curr_label_index.size());
-        label_entry_points[lbl] = label_id_to_orig_id_map[lbl][curr_label_entry_point];
+        
+        path curr_label_data(curr_label_index_path+".data");
+        if (!file_exists(curr_label_data)){
+            curr_label_entry_point = (uint32_t)random(0, curr_label_index.size());
+            label_entry_points[lbl] = std::vector<uint32_t>(1,label_id_to_orig_id_map[lbl][curr_label_entry_point]);
+        }
+        else{
+            uint32_t label_nd, label_dim;
+            std::ifstream label_data_reader(curr_label_data);
+            label_data_reader.read((char*)&label_nd,sizeof(uint32_t));
+            label_data_reader.read((char*)&label_dim,sizeof(uint32_t));
+            T* label_data = new T[label_nd * label_dim];
+            label_data_reader.read((char*)label_data,sizeof(T)*label_nd*label_dim);
+            label_data_reader.close();
+            // kmeans to cluster
+            float* float_label_data = new float[label_nd * label_dim];
+            #pragma omp parallel for
+            for (uint32_t ii=0;ii<label_nd*label_dim;ii++){
+                float_label_data[ii] = label_data[ii];
+            }
+            delete[] label_data;
+            float* pivot_data = new float[num_start_point * label_dim];
+            kmeans::selecting_pivots(float_label_data,label_nd,label_dim,pivot_data,num_start_point);
+            std::vector<std::vector<size_t>> inverted_data(num_start_point,std::vector<size_t>());
+            kmeans::run_lloyds(float_label_data,label_nd,label_dim,pivot_data,num_start_point,30,inverted_data.data(),NULL);
+            std::vector<uint32_t> current_label_medoids;
+            for (uint32_t ii=0;ii<num_start_point;ii++){
+                if (inverted_data[ii].size()>0){
+                    uint32_t id_inside_cluster = (uint32_t)random(0,inverted_data[ii].size());
+                    curr_label_entry_point = inverted_data[ii][id_inside_cluster];
+                    if (curr_label_entry_point<label_id_to_orig_id_map[lbl].size()){
+                        current_label_medoids.push_back(label_id_to_orig_id_map[lbl][curr_label_entry_point]);
+                    }
+                }
+            }
+            label_entry_points[lbl] = current_label_medoids;
+            delete[] float_label_data;
+            delete[] pivot_data;
+        }
+        
 
         for (uint32_t node_point = 0; node_point < curr_label_index.size(); node_point++)
         {
@@ -337,7 +391,7 @@ stitch_indices_return_values stitch_label_indices(
 template <typename T>
 void prune_and_save(path final_index_path_prefix, path full_index_path_prefix, path input_data_path,
                     std::vector<std::vector<uint32_t>> stitched_graph, uint32_t stitched_R,
-                    tsl::robin_map<std::string, uint32_t> label_entry_points, std::string universal_label,
+                    tsl::robin_map<std::string, std::vector<uint32_t>> label_entry_points, std::string universal_label,
                     path label_data_path, uint32_t num_threads)
 {
     size_t dimension, number_of_label_points;
@@ -402,7 +456,7 @@ int main(int argc, char **argv)
     path labels_file_to_use = final_index_path_prefix + "_label_formatted.txt";
     path labels_map_file = final_index_path_prefix + "_labels_map.txt";
 
-    // convert_labels_string_to_int(label_data_path, labels_file_to_use, labels_map_file, universal_label);
+    convert_labels_string_to_int(label_data_path, labels_file_to_use, labels_map_file, universal_label);
 
     // 2. parse label file and create necessary data structures
     std::vector<label_set> point_ids_to_labels;
@@ -443,21 +497,21 @@ int main(int argc, char **argv)
 #endif
 
     // 4. for each created data file, create a vanilla diskANN index
-    if (data_type == "uint8")
-        diskann::generate_label_indices<uint8_t>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
-                                                 num_threads);
-    else if (data_type == "int8")
-        diskann::generate_label_indices<int8_t>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
-                                                num_threads);
-    else if (data_type == "float")
-        diskann::generate_label_indices<float>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
-                                               num_threads);
-    else
-        throw;
+    // if (data_type == "uint8")
+    //     diskann::generate_label_indices<uint8_t>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
+    //                                              num_threads);
+    // else if (data_type == "int8")
+    //     diskann::generate_label_indices<int8_t>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
+    //                                             num_threads);
+    // else if (data_type == "float")
+    //     diskann::generate_label_indices<float>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
+    //                                            num_threads);
+    // else
+    //     throw;
 
     // 5. "stitch" the indices together
     std::vector<std::vector<uint32_t>> stitched_graph;
-    tsl::robin_map<std::string, uint32_t> label_entry_points;
+    tsl::robin_map<std::string, std::vector<uint32_t>> label_entry_points;
     uint64_t stitched_graph_size;
 
     if (data_type == "uint8")

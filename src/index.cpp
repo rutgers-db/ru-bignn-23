@@ -290,10 +290,22 @@ void Index<T, TagT, LabelT>::save(const char *filename, bool compact_before_save
                 {
                     throw diskann::ANNException(std::string("Failed to open file ") + filename, -1);
                 }
-                for (auto iter : _label_to_medoid_id)
-                {
-                    medoid_writer << iter.first << ", " << iter.second << std::endl;
+                for (auto& iter:_label_to_medoid_id){
+                    medoid_writer << iter.first << ":";
+                    std::vector<uint32_t>& mediod_vector = iter.second;
+                    for (uint32_t ii=0;ii<mediod_vector.size();++ii){
+                        if (ii==mediod_vector.size()-1){
+                            medoid_writer<<mediod_vector[ii]<<std::endl;
+                        }
+                        else{
+                            medoid_writer<<mediod_vector[ii]<<",";
+                        }
+                    }
                 }
+                // for (auto iter : _label_to_medoid_id)
+                // {
+                //     medoid_writer << iter.first << ", " << iter.second << std::endl;
+                // }
                 medoid_writer.close();
             }
 
@@ -568,18 +580,23 @@ void Index<T, TagT, LabelT>::load(const char *filename, uint32_t num_threads, ui
                 uint32_t cnt = 0;
                 uint32_t medoid = 0;
                 LabelT label;
+                std::getline(iss,token,':');
+                label = (LabelT)std::stoul(token);
+                std::vector<uint32_t> current_mediod;
                 while (std::getline(iss, token, ','))
                 {
                     token.erase(std::remove(token.begin(), token.end(), '\n'), token.end());
                     token.erase(std::remove(token.begin(), token.end(), '\r'), token.end());
                     LabelT token_as_num = (LabelT)std::stoul(token);
-                    if (cnt == 0)
-                        label = token_as_num;
-                    else
-                        medoid = token_as_num;
-                    cnt++;
+                    current_mediod.push_back(token_as_num);
+                //     if (cnt == 0)
+                //         label = token_as_num;
+                //     else
+                //         medoid = token_as_num;
+                //     cnt++;
                 }
-                _label_to_medoid_id[label] = medoid;
+                _label_to_medoid_id[label]=current_mediod;
+                // _label_to_medoid_id[label] = medoid;
                 line_cnt++;
             }
         }
@@ -998,7 +1015,8 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune(int location, uint32_t L
     {
         std::vector<uint32_t> filter_specific_start_nodes;
         for (auto &x : _pts_to_labels[location])
-            filter_specific_start_nodes.emplace_back(_label_to_medoid_id[x]);
+            for (auto &y: _label_to_medoid_id[x])
+                filter_specific_start_nodes.emplace_back(y);
 
         _data_store->get_vector(location, scratch->aligned_query());
         iterate_to_fixed_point(scratch->aligned_query(), filteredLindex, filter_specific_start_nodes, scratch, true,
@@ -1514,44 +1532,44 @@ void Index<T, TagT, LabelT>::prune_all_neighbors(const uint32_t max_degree, cons
                       << "  count(deg<2):" << cnt << std::endl;
     }
     // select start point for each point
-    std::unordered_map<LabelT,std::pair<uint32_t, uint32_t>> bsf_start_point;
-    std::mutex mtx;
-    #pragma omp parallel for
-    for (uint32_t i=0;i<_max_points;i++){
-        auto neighbor_list = get_neighbor(i);
-        std::unordered_map<LabelT,uint32_t> label_to_degree;
-        for (auto& neighbor: neighbor_list){
-            for (auto& curr_label: _pts_to_labels[neighbor]){
-                if (label_to_degree.find(curr_label)==label_to_degree.end()){
-                    label_to_degree[curr_label] = 1;
-                }
-                else{
-                    label_to_degree[curr_label]++;
-                }
-            }
-        }
-        for (auto& label_degree_count: label_to_degree){
-            LabelT curr_label = label_degree_count.first;
-            uint32_t degree = label_degree_count.second;
-            if (std::find(_pts_to_labels[i].begin(),_pts_to_labels[i].end(),curr_label)==_pts_to_labels[i].end())
-                continue;
-            mtx.lock();
-            if (bsf_start_point.find(curr_label)==bsf_start_point.end()){
-                bsf_start_point[curr_label] = std::pair<uint32_t, uint32_t>(i,degree);
-            }
-            else{
-                auto& p = bsf_start_point[curr_label];
-                if (degree > p.second){
-                    bsf_start_point[curr_label] = std::pair<uint32_t, uint32_t>(i,degree);
-                }
-            }
-            mtx.unlock();
-        }
-    }
+    // std::unordered_map<LabelT,std::pair<uint32_t, uint32_t>> bsf_start_point;
+    // std::mutex mtx;
+    // #pragma omp parallel for
+    // for (uint32_t i=0;i<_max_points;i++){
+    //     auto neighbor_list = get_neighbor(i);
+    //     std::unordered_map<LabelT,uint32_t> label_to_degree;
+    //     for (auto& neighbor: neighbor_list){
+    //         for (auto& curr_label: _pts_to_labels[neighbor]){
+    //             if (label_to_degree.find(curr_label)==label_to_degree.end()){
+    //                 label_to_degree[curr_label] = 1;
+    //             }
+    //             else{
+    //                 label_to_degree[curr_label]++;
+    //             }
+    //         }
+    //     }
+    //     for (auto& label_degree_count: label_to_degree){
+    //         LabelT curr_label = label_degree_count.first;
+    //         uint32_t degree = label_degree_count.second;
+    //         if (std::find(_pts_to_labels[i].begin(),_pts_to_labels[i].end(),curr_label)==_pts_to_labels[i].end())
+    //             continue;
+    //         mtx.lock();
+    //         if (bsf_start_point.find(curr_label)==bsf_start_point.end()){
+    //             bsf_start_point[curr_label] = std::pair<uint32_t, uint32_t>(i,degree);
+    //         }
+    //         else{
+    //             auto& p = bsf_start_point[curr_label];
+    //             if (degree > p.second){
+    //                 bsf_start_point[curr_label] = std::pair<uint32_t, uint32_t>(i,degree);
+    //             }
+    //         }
+    //         mtx.unlock();
+    //     }
+    // }
     
-    for (auto& label_to_best_ep: bsf_start_point){
-        _label_to_medoid_id[label_to_best_ep.first] = label_to_best_ep.second.first;
-    }
+    // for (auto& label_to_best_ep: bsf_start_point){
+    //     _label_to_medoid_id[label_to_best_ep.first] = label_to_best_ep.second.first;
+    // }
     
 }
 
@@ -2048,9 +2066,10 @@ void Index<T, TagT, LabelT>::build_filtered_index(const char *filename, const st
                 best_medoid = cur_cnd;
             }
         }
-        _label_to_medoid_id[curr_label] = best_medoid;
+        _label_to_medoid_id[curr_label] = std::vector<uint32_t>(1,best_medoid);
         _medoid_counts[best_medoid]++;
     }
+
 
     this->build(filename, num_points_to_load, tags);
 }
@@ -2225,7 +2244,10 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::search_with_filters(const 
 
     if (_label_to_medoid_id.find(filter_label) != _label_to_medoid_id.end())
     {
-        init_ids.emplace_back(_label_to_medoid_id[filter_label]);
+        for (auto& start_point: _label_to_medoid_id[filter_label]){
+            init_ids.emplace_back(start_point);
+        }
+        
     }
     else
     {

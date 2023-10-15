@@ -381,7 +381,7 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     tsl::robin_set<LabelT> _labels;
     std::vector<uint32_t> _labels_pts_count;
     std::string _labels_file;
-    std::unordered_map<LabelT, uint32_t> _label_to_medoid_id;
+    std::unordered_map<LabelT, std::vector<uint32_t>> _label_to_medoid_id;
     std::unordered_map<uint32_t, uint32_t> _medoid_counts;
     bool _use_universal_label = false;
     LabelT _universal_label = 0;
