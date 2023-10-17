@@ -2250,6 +2250,12 @@ void Index<T, TagT, LabelT>::parse_label_file(const std::string &label_file, siz
     for (uint32_t i=0;i<num_points;i++){
         for (auto& x:_pts_to_labels[i]){
             _labels_pts_count[x]++;
+            if (_label_to_pts.find(x)==_label_to_pts.end()){
+                _label_to_pts[x] = std::vector<uint32_t>(1,i);
+            }
+            else{
+                _label_to_pts[x].push_back(i);
+            }
         }
     }
 }
@@ -2607,11 +2613,9 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::search_with_multi_filters(
         std::vector<float> &dist_scratch = scratch->dist_scratch();
         T *aligned_query = scratch->aligned_query();
         assert(dist_scratch.size() == 0);
-        for (uint32_t id=0;id<_max_points;++id){
-            if (std::find(_pts_to_labels[id].begin(),_pts_to_labels[id].end(),actual_filter)!=_pts_to_labels[id].end()){
-                if (match_all_filters(id,true,filter_vec)){
-                    id_scratch.push_back(id);
-                }
+        for (uint32_t id: _label_to_pts[actual_filter]){
+            if (match_all_filters(id,true,filter_vec)){
+                id_scratch.push_back(id);
             }
         }
         for (size_t m = 0; m < id_scratch.size(); ++m)
