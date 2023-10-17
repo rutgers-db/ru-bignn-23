@@ -87,6 +87,9 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     DISKANN_DLLEXPORT bool detect_common_filters(uint32_t point_id, bool search_invocation,
                                                  const std::vector<LabelT> &incoming_labels);
 
+    DISKANN_DLLEXPORT bool match_all_filters(uint32_t point_id, bool search_invocation, 
+                                             const std::vector<LabelT> &incoming_labels);
+
     // Batch build from a file. Optionally pass tags vector.
     DISKANN_DLLEXPORT void build(const char *filename, const size_t num_points_to_load,
                                  const std::vector<TagT> &tags = std::vector<TagT>());
@@ -260,6 +263,12 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
                                                          InMemQueryScratch<T> *scratch, bool use_filter,
                                                          const std::vector<LabelT> &filters, bool search_invocation, uint32_t location=-1);
 
+    std::pair<uint32_t, uint32_t> iterate_to_fixed_point_v2(const T *node_coords, const uint32_t Lindex,
+                                                         const std::vector<uint32_t> &init_ids,
+                                                         InMemQueryScratch<T> *scratch, bool use_filter,
+                                                         const std::vector<LabelT> &filters, bool search_invocation, uint32_t location=-1);
+    
+    
     void search_for_point_and_prune(int location, uint32_t Lindex, std::vector<uint32_t> &pruned_list,
                                     InMemQueryScratch<T> *scratch, bool use_filter = false,
                                     uint32_t filteredLindex = 0);

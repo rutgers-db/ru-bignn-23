@@ -166,6 +166,9 @@ int search_memory_index(diskann::Metric &metric, const std::string &index_path,
 #pragma omp parallel for schedule(dynamic, 1)
         for (int64_t i = 0; i < (int64_t)query_num; i++)
         {
+            // if (i==2){
+            //     std::cout<<std::endl;
+            // }
             auto qs = std::chrono::high_resolution_clock::now();
             if (filtered_search)
             {
