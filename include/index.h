@@ -87,6 +87,8 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     DISKANN_DLLEXPORT bool detect_common_filters(uint32_t point_id, bool search_invocation,
                                                  const std::vector<LabelT> &incoming_labels);
 
+    DISKANN_DLLEXPORT uint32_t common_filter_size(uint32_t point_id, bool search_invocation, const std::vector<LabelT> &incoming_labels);
+
     DISKANN_DLLEXPORT bool match_all_filters(uint32_t point_id, bool search_invocation, 
                                              const std::vector<LabelT> &incoming_labels);
 
@@ -266,7 +268,7 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     std::pair<uint32_t, uint32_t> iterate_to_fixed_point_v2(const T *node_coords, const uint32_t Lindex,
                                                          const std::vector<uint32_t> &init_ids,
                                                          InMemQueryScratch<T> *scratch, bool use_filter,
-                                                         const std::vector<LabelT> &filters, bool search_invocation, uint32_t location=-1);
+                                                         const std::vector<LabelT> &filters, bool search_invocation, uint32_t location=-1, uint32_t K=10);
     
     
     void search_for_point_and_prune(int location, uint32_t Lindex, std::vector<uint32_t> &pruned_list,

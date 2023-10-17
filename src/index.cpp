@@ -774,6 +774,42 @@ bool Index<T, TagT, LabelT>::detect_common_filters(uint32_t point_id, bool searc
 }
 
 template <typename T, typename TagT, typename LabelT>
+uint32_t Index<T, TagT, LabelT>::common_filter_size(uint32_t point_id, bool search_invocation,
+                                                   const std::vector<LabelT> &incoming_labels)
+{
+    auto &curr_node_labels = _pts_to_labels[point_id];
+    std::vector<LabelT> common_filters;
+    std::set_intersection(incoming_labels.begin(), incoming_labels.end(), curr_node_labels.begin(),
+                          curr_node_labels.end(), std::back_inserter(common_filters));
+    if (common_filters.size() > 0)
+    {
+        // This is to reduce the repetitive calls. If common_filters size is > 0 ,
+        // we dont need to check further for universal label
+        return common_filters.size();
+    }
+    if (_use_universal_label)
+    {
+        if (!search_invocation)
+        {
+            if (std::find(incoming_labels.begin(), incoming_labels.end(), _universal_label) != incoming_labels.end() ||
+                std::find(curr_node_labels.begin(), curr_node_labels.end(), _universal_label) != curr_node_labels.end())
+                common_filters.push_back(_universal_label);
+        }
+        else
+        {
+            if (std::find(curr_node_labels.begin(), curr_node_labels.end(), _universal_label) != curr_node_labels.end())
+                common_filters.push_back(_universal_label);
+        }
+    }
+    if (common_filters.size()>0){
+        return incoming_labels.size();
+    }
+    else{
+        return 0;
+    }
+}
+
+template <typename T, typename TagT, typename LabelT>
 bool Index<T, TagT, LabelT>::match_all_filters(uint32_t point_id, bool search_invocation,
                                                    const std::vector<LabelT> &incoming_labels)
 {
@@ -1024,16 +1060,18 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point(
 template <typename T, typename TagT, typename LabelT>
 std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_v2(
     const T *query, const uint32_t Lsize, const std::vector<uint32_t> &init_ids, InMemQueryScratch<T> *scratch,
-    bool use_filter, const std::vector<LabelT> &filter_label, bool search_invocation, uint32_t location)
+    bool use_filter, const std::vector<LabelT> &filter_label, bool search_invocation, uint32_t location, uint32_t K)
 {
+    assert(use_filter);
     std::vector<Neighbor> &expanded_nodes = scratch->pool();
     NeighborPriorityQueue &final_result = scratch->best_l_nodes();
     NeighborPriorityQueue best_L_nodes(Lsize);
-    final_result.reserve(Lsize);
+    final_result.reserve(K);
     tsl::robin_set<uint32_t> &inserted_into_pool_rs = scratch->inserted_into_pool_rs();
     boost::dynamic_bitset<> &inserted_into_pool_bs = scratch->inserted_into_pool_bs();
     std::vector<uint32_t> &id_scratch = scratch->id_scratch();
     std::vector<float> &dist_scratch = scratch->dist_scratch();
+    std::vector<uint32_t> commmon_filter_size_scratch;
     assert(id_scratch.size() == 0);
 
     T *aligned_query = scratch->aligned_query();
@@ -1172,6 +1210,7 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_v2(
         // Find which of the nodes in des have not been visited before
         id_scratch.clear();
         dist_scratch.clear();
+        commmon_filter_size_scratch.clear();
         {
             if (_dynamic_index)
                 _locks[n].lock();
@@ -1179,14 +1218,16 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_v2(
             {
                 assert(id < _max_points + _num_frozen_pts);
 
-                if (use_filter)
+                if (is_not_visited(id) && use_filter)
                 {
                     // NOTE: NEED TO CHECK IF THIS CORRECT WITH NEW LOCKS.
-                    if (!detect_common_filters(id, search_invocation, filter_label))
+                    uint32_t common_size = common_filter_size(id,search_invocation,filter_label);
+                    if (common_size == 0)
                         continue;
+                    id_scratch.push_back(id);
+                    commmon_filter_size_scratch.push_back(common_size);
                 }
-
-                if (is_not_visited(id))
+                else if (is_not_visited(id))
                 {
                     id_scratch.push_back(id);
                 }
@@ -1218,6 +1259,7 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_v2(
         else
         {
             assert(dist_scratch.size() == 0);
+            dist_scratch.reserve(id_scratch.size());
             for (size_t m = 0; m < id_scratch.size(); ++m)
             {
                 uint32_t id = id_scratch[m];
@@ -1238,7 +1280,10 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_v2(
         {
             Neighbor nn(id_scratch[m], dist_scratch[m]);
             best_L_nodes.insert(nn);
-            if (match_all_filters(id_scratch[m],search_invocation,filter_label)){
+            if (use_filter && commmon_filter_size_scratch[m]==filter_label.size()){
+                final_result.insert(nn);
+            }
+            else if (!use_filter){
                 final_result.insert(nn);
             }
         }
@@ -2608,6 +2653,7 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::search_with_multi_filters(
     NeighborPriorityQueue &best_L_nodes = scratch->best_l_nodes();
     std::pair<uint32_t, uint32_t> retval;
     if (small_filters.size()>0){
+        best_L_nodes.reserve(K);
         LabelT actual_filter = small_filters[0];
         std::vector<uint32_t> &id_scratch = scratch->id_scratch();
         std::vector<float> &dist_scratch = scratch->dist_scratch();
@@ -2618,6 +2664,7 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::search_with_multi_filters(
                 id_scratch.push_back(id);
             }
         }
+        dist_scratch.reserve(id_scratch.size());
         for (size_t m = 0; m < id_scratch.size(); ++m)
         {
             uint32_t id = id_scratch[m];
@@ -2667,7 +2714,7 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::search_with_multi_filters(
     }
     if (pos < K)
     {
-        // diskann::cerr << "Found fewer than K elements for query" << std::endl;
+        diskann::cerr << "Found fewer than K elements for query" << std::endl;
     }
 
     return retval;    
