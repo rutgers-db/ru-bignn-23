@@ -2624,7 +2624,9 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::search_with_multi_filters(
     }
 
     std::vector<LabelT> filter_vec;
-    std::vector<LabelT> small_filters;
+    LabelT best_filter;
+    uint32_t smallest_cardinality = std::numeric_limits<uint32_t>::max();
+    std::vector<float> selectivity;
     std::vector<uint32_t> init_ids = get_init_ids();
 
     std::shared_lock<std::shared_timed_mutex> lock(_update_lock);
@@ -2643,18 +2645,31 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::search_with_multi_filters(
             throw diskann::ANNException("No filtered medoid found. exitting ", -1);
         }
         filter_vec.emplace_back(filter_label);
-        if (_labels_pts_count[filter_label]<1000){
-            small_filters.push_back(filter_label);
+        if (_labels_pts_count[filter_label]<smallest_cardinality){
+            smallest_cardinality = _labels_pts_count[filter_label];
+            best_filter = filter_label;
         }
+        selectivity.push_back((float)_labels_pts_count[filter_label]/(float)_max_points);
     }
     std::sort(filter_vec.begin(),filter_vec.end());
+    std::sort(selectivity.begin(),selectivity.end());
+    float cardinality = _max_points;
+    for (uint32_t i=0;i<selectivity.size();i++){
+        float select = selectivity[selectivity.size()-i-1];
+        uint32_t j=i;
+        while (j>0){
+            select = std::sqrt(select);
+            j--;
+        }
+        cardinality = cardinality * select;
+    }
 
     _data_store->get_dist_fn()->preprocess_query(query, _data_store->get_dims(), scratch->aligned_query());
     NeighborPriorityQueue &best_L_nodes = scratch->best_l_nodes();
     std::pair<uint32_t, uint32_t> retval;
-    if (small_filters.size()>0){
+    if (cardinality < 1000 || smallest_cardinality < 1000){
         best_L_nodes.reserve(K);
-        LabelT actual_filter = small_filters[0];
+        LabelT actual_filter = best_filter;
         std::vector<uint32_t> &id_scratch = scratch->id_scratch();
         std::vector<float> &dist_scratch = scratch->dist_scratch();
         T *aligned_query = scratch->aligned_query();
@@ -2714,7 +2729,7 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::search_with_multi_filters(
     }
     if (pos < K)
     {
-        diskann::cerr << "Found fewer than K elements for query" << std::endl;
+        // diskann::cerr << "Found fewer than K elements for query" << std::endl;
     }
 
     return retval;    

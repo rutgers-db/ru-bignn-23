@@ -497,17 +497,17 @@ int main(int argc, char **argv)
 #endif
 
     // 4. for each created data file, create a vanilla diskANN index
-    // if (data_type == "uint8")
-    //     diskann::generate_label_indices<uint8_t>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
-    //                                              num_threads);
-    // else if (data_type == "int8")
-    //     diskann::generate_label_indices<int8_t>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
-    //                                             num_threads);
-    // else if (data_type == "float")
-    //     diskann::generate_label_indices<float>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
-    //                                            num_threads);
-    // else
-    //     throw;
+    if (data_type == "uint8")
+        diskann::generate_label_indices<uint8_t>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
+                                                 num_threads);
+    else if (data_type == "int8")
+        diskann::generate_label_indices<int8_t>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
+                                                num_threads);
+    else if (data_type == "float")
+        diskann::generate_label_indices<float>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
+                                               num_threads);
+    else
+        throw;
 
     // 5. "stitch" the indices together
     std::vector<std::vector<uint32_t>> stitched_graph;
