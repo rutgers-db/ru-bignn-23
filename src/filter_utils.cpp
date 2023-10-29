@@ -67,6 +67,41 @@ void print_memory() {
 #endif
 }
 
+void read_sparse_matrix(char* filename,int64_t& rows, int64_t& cols, int64_t& nnz, int64_t*& row_index, int32_t*& col_index, float*& value){
+    std::ifstream reader(filename,std::ios::binary|std::ios::in);
+    reader.read((char*)&rows,sizeof(int64_t));
+    reader.read((char*)&cols,sizeof(int64_t));
+    reader.read((char*)&nnz,sizeof(int64_t));
+    //std::cout<<"Matrix size: ("<<rows<<", "<<cols<<"), non-zeros elements: "<<nnz<<std::endl;
+    if (row_index!=nullptr){
+        delete[] row_index;
+    }
+    row_index = new int64_t[rows+1];
+    if (col_index!=nullptr){
+        delete[] col_index;
+    }
+    if (value!=nullptr){
+        delete[] value;
+    }
+    col_index = new int32_t[nnz];
+    value = new float[nnz];
+    reader.read((char*)row_index,sizeof(int64_t)*(rows+1));
+    reader.read((char*)col_index,sizeof(int32_t)*nnz);
+    reader.read((char*)value,sizeof(float)*nnz);
+    reader.close();
+}
+
+void write_labels(char* filename, int64_t* row_index, int32_t* col_index, uint32_t nd){
+    std::ofstream writer(filename,std::ios::out);
+    for (int i=0;i<nd;i++){
+        for (int j=row_index[i];j<row_index[i+1]-1;j++){
+            writer<<(col_index[j]+1)<<",";
+        }
+        writer<<(col_index[row_index[i+1]-1]+1)<<std::endl;
+    }
+    writer.close();
+}
+
 namespace diskann
 {
 /*
