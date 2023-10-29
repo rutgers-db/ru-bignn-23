@@ -340,8 +340,8 @@ float run_lloyds(float *data, size_t num_points, size_t dim, float *centers, con
         if (((i != 0) && ((old_residual - residual) / residual) < 0.00001) ||
             (residual < std::numeric_limits<float>::epsilon()))
         {
-            diskann::cout << "Residuals unchanged: " << old_residual << " becomes " << residual
-                          << ". Early termination." << std::endl;
+            // diskann::cout << "Residuals unchanged: " << old_residual << " becomes " << residual
+            //               << ". Early termination." << std::endl;
             break;
         }
     }

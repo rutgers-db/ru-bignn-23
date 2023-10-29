@@ -172,10 +172,10 @@ std::tuple<uint32_t, uint32_t, size_t> InMemGraphStore::load_impl(const std::str
         uint32_t k;
         in.read((char *)&k, sizeof(uint32_t));
 
-        if (k == 0)
-        {
-            diskann::cerr << "ERROR: Point found with no out-neighbours, point#" << nodes_read << std::endl;
-        }
+        // if (k == 0)
+        // {
+        //     // diskann::cerr << "ERROR: Point found with no out-neighbours, point#" << nodes_read << std::endl;
+        // }
 
         cc += k;
         ++nodes_read;
@@ -184,7 +184,7 @@ std::tuple<uint32_t, uint32_t, size_t> InMemGraphStore::load_impl(const std::str
         in.read((char *)tmp.data(), k * sizeof(uint32_t));
         _graph[nodes_read - 1].swap(tmp);
         bytes_read += sizeof(uint32_t) * ((size_t)k + 1);
-        if (nodes_read % 10000000 == 0)
+        if (nodes_read % 1000000 == 0)
             diskann::cout << "." << std::flush;
         if (k > _max_range_of_graph)
         {

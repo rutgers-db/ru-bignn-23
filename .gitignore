@@ -381,3 +381,6 @@ gperftools
 
 # Rust
 rust/target
+
+.vscode/*
+.vscode

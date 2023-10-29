@@ -39,14 +39,24 @@ typedef int FileHandle;
 #include "utils.h"
 #include "windows_customizations.h"
 
+#ifdef __linux__
+#include "sys/sysinfo.h"
+#include "sys/types.h"
+#endif
+
 // custom types (for readability)
-typedef tsl::robin_set<std::string> label_set;
+// typedef tsl::robin_set<std::string> label_set;
+typedef tsl::robin_set<uint32_t> label_set;
 typedef std::string path;
 
 // structs for returning multiple items from a function
-typedef std::tuple<std::vector<label_set>, tsl::robin_map<std::string, uint32_t>, tsl::robin_set<std::string>>
+typedef std::tuple<std::vector<label_set>, tsl::robin_map<std::string, uint32_t>, tsl::robin_set<uint32_t>>
     parse_label_file_return_values;
 typedef std::tuple<std::vector<std::vector<uint32_t>>, uint64_t> load_label_index_return_values;
+
+
+void print_memory();
+
 
 namespace diskann
 {
@@ -61,8 +71,8 @@ DISKANN_DLLEXPORT parse_label_file_return_values parse_label_file(path label_dat
 
 template <typename T>
 DISKANN_DLLEXPORT tsl::robin_map<std::string, std::vector<uint32_t>> generate_label_specific_vector_files_compat(
-    path input_data_path, tsl::robin_map<std::string, uint32_t> labels_to_number_of_points,
-    std::vector<label_set> point_ids_to_labels, label_set all_labels);
+    path input_data_path, tsl::robin_map<std::string, uint32_t> &labels_to_number_of_points,
+    std::vector<label_set> &point_ids_to_labels, label_set all_labels);
 
 /*
  * For each label, generates a file containing all vectors that have said label.
@@ -99,10 +109,12 @@ inline tsl::robin_map<std::string, std::vector<uint32_t>> generate_label_specifi
     tsl::robin_map<std::string, iovec *> label_to_iovec_map;
     tsl::robin_map<std::string, uint32_t> label_to_curr_iovec;
     tsl::robin_map<std::string, std::vector<uint32_t>> label_id_to_orig_id;
-
+    std::cout<<"B1"<<std::endl;
     // setup iovec list for each label
-    for (const auto &lbl : all_labels)
+    for (const auto &bl : all_labels)
     {
+        std::string lbl = std::to_string(bl);
+
         iovec *label_iovecs = (iovec *)malloc(labels_to_number_of_points[lbl] * sizeof(iovec));
         if (label_iovecs == nullptr)
         {
@@ -121,17 +133,20 @@ inline tsl::robin_map<std::string, std::vector<uint32_t>> generate_label_specifi
 
         curr_iovec.iov_base = curr_point;
         curr_iovec.iov_len = VECTOR_SIZE;
-        for (const auto &lbl : point_ids_to_labels[point_id])
+        for (const auto &bl : point_ids_to_labels[point_id])
         {
+            std::string lbl = std::to_string(bl);
             *(label_to_iovec_map[lbl] + label_to_curr_iovec[lbl]) = curr_iovec;
             label_to_curr_iovec[lbl]++;
             label_id_to_orig_id[lbl].push_back(point_id);
         }
     }
+    std::cout<<"B2"<<std::endl;
 
     // write each label iovec to resp. file
-    for (const auto &lbl : all_labels)
+    for (const auto &bl : all_labels)
     {
+        std::string lbl = std::to_string(bl);
         int label_input_data_fd;
         path curr_label_input_data_path(input_data_path + "_" + lbl);
         uint32_t curr_num_pts = labels_to_number_of_points[lbl];

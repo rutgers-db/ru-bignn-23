@@ -74,6 +74,8 @@ int search_memory_index(diskann::Metric &metric, const std::string &index_path,
 
     const size_t num_frozen_pts = diskann::get_graph_num_frozen_points(index_path);
 
+    std::cout<<"num_frozen_pts:"<<num_frozen_pts<<std::endl;
+
     auto config = diskann::IndexConfigBuilder()
                       .with_metric(metric)
                       .with_dimension(query_dim)

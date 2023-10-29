@@ -14,6 +14,59 @@
 #include "parameters.h"
 #include "utils.h"
 
+
+
+void print_memory() {
+#ifdef __linux__
+  struct sysinfo memInfo;
+
+  sysinfo(&memInfo);
+  // long long totalVirtualMem = memInfo.totalram;
+  // // Add other values in next statement to avoid int overflow on right hand
+  // // side...
+  // totalVirtualMem += memInfo.totalswap;
+  // totalVirtualMem *= memInfo.mem_unit;
+
+  long long virtualMemUsed = memInfo.totalram - memInfo.freeram;
+  // Add other values in next statement to avoid int overflow on right hand
+  // side...
+  virtualMemUsed += memInfo.totalswap - memInfo.freeswap;
+  virtualMemUsed *= memInfo.mem_unit;
+  // cout << "Total Virtual Memory: " << totalVirtualMem << endl;
+  std::cout << "Used Virtual Memory: " << virtualMemUsed << std::endl;
+
+  long long totalPhysMem = memInfo.totalram;
+  // Multiply in next statement to avoid int overflow on right hand side...
+  totalPhysMem *= memInfo.mem_unit;
+
+  long long physMemUsed = memInfo.totalram - memInfo.freeram;
+  // Multiply in next statement to avoid int overflow on right hand side...
+  physMemUsed *= memInfo.mem_unit;
+
+  // cout << "Total Physical Memory: " << totalPhysMem << endl;
+  std::cout << "Used Physical Memory: " << physMemUsed << std::endl;
+#elif __APPLE__
+  vm_size_t page_size;
+  mach_port_t mach_port;
+  mach_msg_type_number_t count;
+  vm_statistics64_data_t vm_stats;
+
+  mach_port = mach_host_self();
+  count = sizeof(vm_stats) / sizeof(natural_t);
+  if (KERN_SUCCESS == host_page_size(mach_port, &page_size) &&
+      KERN_SUCCESS == host_statistics64(mach_port, HOST_VM_INFO,
+                                        (host_info64_t)&vm_stats, &count)) {
+    long long free_memory = (int64_t)vm_stats.free_count * (int64_t)page_size;
+
+    long long used_memory =
+        ((int64_t)vm_stats.active_count + (int64_t)vm_stats.inactive_count +
+         (int64_t)vm_stats.wire_count) *
+        (int64_t)page_size;
+    printf("free memory: %lld\nused memory: %lld\n", free_memory, used_memory);
+  }
+#endif
+}
+
 namespace diskann
 {
 /*
@@ -38,8 +91,9 @@ void generate_label_indices(path input_data_path, path final_index_path_prefix, 
     double total_indexing_time = 0.0, indexing_percentage = 0.0;
     std::cout.setstate(std::ios_base::failbit);
     diskann::cout.setstate(std::ios_base::failbit);
-    for (const auto &lbl : all_labels)
+    for (const auto &bl : all_labels)
     {
+        std::string lbl = std::to_string(bl);
         path curr_label_input_data_path(input_data_path + "_" + lbl);
         path curr_label_index_path(final_index_path_prefix + "_" + lbl);
 
@@ -71,8 +125,8 @@ void generate_label_indices(path input_data_path, path final_index_path_prefix, 
 // for use on systems without writev (i.e. Windows)
 template <typename T>
 tsl::robin_map<std::string, std::vector<uint32_t>> generate_label_specific_vector_files_compat(
-    path input_data_path, tsl::robin_map<std::string, uint32_t> labels_to_number_of_points,
-    std::vector<label_set> point_ids_to_labels, label_set all_labels)
+    path input_data_path, tsl::robin_map<std::string, uint32_t> &labels_to_number_of_points,
+    std::vector<label_set> &point_ids_to_labels, label_set all_labels)
 {
     auto file_writing_timer = std::chrono::high_resolution_clock::now();
     std::ifstream input_data_stream(input_data_path);
@@ -91,8 +145,9 @@ tsl::robin_map<std::string, std::vector<uint32_t>> generate_label_specific_vecto
     tsl::robin_map<std::string, uint32_t> labels_to_curr_vector;
     tsl::robin_map<std::string, std::vector<uint32_t>> label_id_to_orig_id;
 
-    for (const auto &lbl : all_labels)
+    for (const auto &bl : all_labels)
     {
+        std::string lbl = std::to_string(bl);
         uint32_t number_of_label_pts = labels_to_number_of_points[lbl];
         char *vectors = (char *)malloc(number_of_label_pts * VECTOR_SIZE);
         if (vectors == nullptr)
@@ -108,8 +163,9 @@ tsl::robin_map<std::string, std::vector<uint32_t>> generate_label_specific_vecto
     {
         char *curr_vector = (char *)malloc(VECTOR_SIZE);
         input_data_stream.read(curr_vector, VECTOR_SIZE);
-        for (const auto &lbl : point_ids_to_labels[point_id])
+        for (const auto &bl : point_ids_to_labels[point_id])
         {
+            std::string lbl = std::to_string(bl);
             char *curr_label_vector_ptr = labels_to_vectors[lbl] + (labels_to_curr_vector[lbl] * VECTOR_SIZE);
             memcpy(curr_label_vector_ptr, curr_vector, VECTOR_SIZE);
             labels_to_curr_vector[lbl]++;
@@ -118,8 +174,9 @@ tsl::robin_map<std::string, std::vector<uint32_t>> generate_label_specific_vecto
         free(curr_vector);
     }
 
-    for (const auto &lbl : all_labels)
+    for (const auto &bl : all_labels)
     {
+        std::string lbl = std::to_string(bl);
         path curr_label_input_data_path(input_data_path + "_" + lbl);
         uint32_t number_of_label_pts = labels_to_number_of_points[lbl];
 
@@ -202,7 +259,7 @@ parse_label_file_return_values parse_label_file(path label_data_path, std::strin
     label_data_stream.seekg(0, std::ios::beg);
 
     // values to return
-    std::vector<label_set> point_ids_to_labels(line_cnt);
+    std::vector<label_set> point_ids_to_labels;
     tsl::robin_map<std::string, uint32_t> labels_to_number_of_points;
     label_set all_labels;
 
@@ -210,6 +267,10 @@ parse_label_file_return_values parse_label_file(path label_data_path, std::strin
     line_cnt = 0;
     while (std::getline(label_data_stream, line))
     {
+        if (line_cnt%1000000==0){
+            std::cout<<line_cnt<<std::endl;
+            print_memory();
+        }
         std::istringstream current_labels_comma_separated(line);
         label_set current_labels;
 
@@ -231,8 +292,8 @@ parse_label_file_return_values parse_label_file(path label_data_path, std::strin
             }
             else
             {
-                all_labels.insert(token);
-                current_labels.insert(token);
+                all_labels.insert(static_cast<uint32_t>(std::stoul(token)));
+                current_labels.insert(static_cast<uint32_t>(std::stoul(token)));
                 labels_to_number_of_points[token]++;
             }
         }
@@ -242,7 +303,7 @@ parse_label_file_return_values parse_label_file(path label_data_path, std::strin
             std::cerr << "Error: " << point_id << " has no labels." << std::endl;
             exit(-1);
         }
-        point_ids_to_labels[point_id] = current_labels;
+        point_ids_to_labels.emplace_back(current_labels);
         line_cnt++;
     }
 
@@ -252,7 +313,7 @@ parse_label_file_return_values parse_label_file(path label_data_path, std::strin
     {
         point_ids_to_labels[point_id] = all_labels;
         for (const auto &lbl : all_labels)
-            labels_to_number_of_points[lbl]++;
+            labels_to_number_of_points[std::to_string(lbl)]++;
     }
 
     std::cout << "Identified " << all_labels.size() << " distinct label(s) for " << point_ids_to_labels.size()
@@ -274,15 +335,15 @@ template DISKANN_DLLEXPORT void generate_label_indices<int8_t>(path input_data_p
 
 template DISKANN_DLLEXPORT tsl::robin_map<std::string, std::vector<uint32_t>>
 generate_label_specific_vector_files_compat<float>(path input_data_path,
-                                                   tsl::robin_map<std::string, uint32_t> labels_to_number_of_points,
-                                                   std::vector<label_set> point_ids_to_labels, label_set all_labels);
+                                                   tsl::robin_map<std::string, uint32_t> &labels_to_number_of_points,
+                                                   std::vector<label_set> &point_ids_to_labels, label_set all_labels);
 template DISKANN_DLLEXPORT tsl::robin_map<std::string, std::vector<uint32_t>>
 generate_label_specific_vector_files_compat<uint8_t>(path input_data_path,
-                                                     tsl::robin_map<std::string, uint32_t> labels_to_number_of_points,
-                                                     std::vector<label_set> point_ids_to_labels, label_set all_labels);
+                                                     tsl::robin_map<std::string, uint32_t> &labels_to_number_of_points,
+                                                     std::vector<label_set> &point_ids_to_labels, label_set all_labels);
 template DISKANN_DLLEXPORT tsl::robin_map<std::string, std::vector<uint32_t>>
 generate_label_specific_vector_files_compat<int8_t>(path input_data_path,
-                                                    tsl::robin_map<std::string, uint32_t> labels_to_number_of_points,
-                                                    std::vector<label_set> point_ids_to_labels, label_set all_labels);
+                                                    tsl::robin_map<std::string, uint32_t> &labels_to_number_of_points,
+                                                    std::vector<label_set> &point_ids_to_labels, label_set all_labels);
 
 } // namespace diskann

@@ -10,6 +10,7 @@
 #include <tuple>
 #include "filter_utils.h"
 #include <omp.h>
+#include <filesystem>
 #ifndef _WINDOWS
 #include <sys/uio.h>
 #endif
@@ -110,8 +111,8 @@ void handle_args(int argc, char **argv, std::string &data_type, path &input_data
 }
 
 void load_full_index(path final_index_path_prefix, path input_data_path, uint64_t &final_index_size,
-                    std::vector<std::vector<uint32_t>>& stitched_graph,
-                    tsl::robin_map<std::string, std::vector<uint32_t>>& entry_points, std::string &universal_label,
+                    std::vector<std::vector<uint32_t>> &stitched_graph,
+                    tsl::robin_map<std::string, std::vector<uint32_t>> &entry_points, std::string &universal_label,
                     path label_data_path)
 {
     std::ifstream labels_to_medoids_reader;
@@ -173,8 +174,8 @@ void load_full_index(path final_index_path_prefix, path input_data_path, uint64_
  *  4. labels (redundant for static indices)
  */
 void save_full_index(path final_index_path_prefix, path input_data_path, uint64_t final_index_size,
-                     std::vector<std::vector<uint32_t>> stitched_graph,
-                     tsl::robin_map<std::string, std::vector<uint32_t>> entry_points, std::string universal_label,
+                     std::vector<std::vector<uint32_t>> &stitched_graph,
+                     tsl::robin_map<std::string, std::vector<uint32_t>> &entry_points, std::string universal_label,
                      path label_data_path)
 {
     // aux. file 1
@@ -285,18 +286,19 @@ void save_full_index(path final_index_path_prefix, path input_data_path, uint64_
  * Returns the "stitched" graph and its expected file size.
  */
 template <typename T>
-stitch_indices_return_values stitch_label_indices(
+size_t stitch_label_indices(
     path final_index_path_prefix, uint32_t total_number_of_points, label_set all_labels,
-    tsl::robin_map<std::string, uint32_t> labels_to_number_of_points,
+    tsl::robin_map<std::string, uint32_t> &labels_to_number_of_points,
     tsl::robin_map<std::string, std::vector<uint32_t>> &label_entry_points,
-    tsl::robin_map<std::string, std::vector<uint32_t>> label_id_to_orig_id_map, uint32_t num_start_point=5)
+    tsl::robin_map<std::string, std::vector<uint32_t>> &label_id_to_orig_id_map,  std::vector<std::vector<uint32_t>> &stitched_graph,uint32_t num_start_point=5)
 {
     size_t final_index_size = 0;
-    std::vector<std::vector<uint32_t>> stitched_graph(total_number_of_points);
+    stitched_graph.resize(total_number_of_points);
 
     auto stitching_index_timer = std::chrono::high_resolution_clock::now();
-    for (const auto &lbl : all_labels)
+    for (const auto &bl : all_labels)
     {
+        std::string lbl = std::to_string(bl);
         path curr_label_index_path(final_index_path_prefix + "_" + lbl);
         if (!file_exists(curr_label_index_path)) {
             if (label_id_to_orig_id_map[lbl].size()>0){
@@ -373,12 +375,12 @@ stitch_indices_return_values stitch_label_indices(
 
     const size_t METADATA = 2 * sizeof(uint64_t) + 2 * sizeof(uint32_t);
     final_index_size += (total_number_of_points * sizeof(uint32_t) + METADATA);
-
+    print_memory();
     std::chrono::duration<double> stitching_index_time =
         std::chrono::high_resolution_clock::now() - stitching_index_timer;
     std::cout << "stitched graph generated in memory in " << stitching_index_time.count() << " seconds" << std::endl;
 
-    return std::make_tuple(stitched_graph, final_index_size);
+    return final_index_size;
 }
 
 /*
@@ -390,29 +392,32 @@ stitch_indices_return_values stitch_label_indices(
  */
 template <typename T>
 void prune_and_save(path final_index_path_prefix, path full_index_path_prefix, path input_data_path,
-                    std::vector<std::vector<uint32_t>> stitched_graph, uint32_t stitched_R,
-                    tsl::robin_map<std::string, std::vector<uint32_t>> label_entry_points, std::string universal_label,
-                    path label_data_path, uint32_t num_threads)
+                     uint32_t stitched_R, uint32_t num_threads)
 {
     size_t dimension, number_of_label_points;
-    auto diskann_cout_buffer = diskann::cout.rdbuf(nullptr);
-    auto std_cout_buffer = std::cout.rdbuf(nullptr);
+    // auto diskann_cout_buffer = diskann::cout.rdbuf(nullptr);
+    // auto std_cout_buffer = std::cout.rdbuf(nullptr);
     auto pruning_index_timer = std::chrono::high_resolution_clock::now();
 
+    std::cerr << "D1" << std::endl;
+
     diskann::get_bin_metadata(input_data_path, number_of_label_points, dimension);
+    std::cerr << "D2" << std::endl;
 
     diskann::Index<T> index(diskann::Metric::L2, dimension, number_of_label_points, nullptr, nullptr, 0, false, false);
+
+    std::cerr << "Loading" << std::endl;
 
     // not searching this index, set search_l to 0
     index.load(full_index_path_prefix.c_str(), num_threads, 1);
 
-    std::cout << "parsing labels" << std::endl;
+    std::cerr << "parsing labels" << std::endl;
 
     index.prune_all_neighbors(stitched_R, 750, 1.2);
     index.save((final_index_path_prefix).c_str());
 
-    diskann::cout.rdbuf(diskann_cout_buffer);
-    std::cout.rdbuf(std_cout_buffer);
+    // diskann::cout.rdbuf(diskann_cout_buffer);
+    // std::cout.rdbuf(std_cout_buffer);
     std::chrono::duration<double> pruning_index_time = std::chrono::high_resolution_clock::now() - pruning_index_timer;
     std::cout << "pruning performed in " << pruning_index_time.count() << " seconds\n" << std::endl;
 }
@@ -425,18 +430,22 @@ void prune_and_save(path final_index_path_prefix, path full_index_path_prefix, p
  * 2. the separate diskANN indices built for each label
  * 3. the '.data' file created while generating the indices
  */
-void clean_up_artifacts(path input_data_path, path final_index_path_prefix, label_set all_labels, tsl::robin_map<std::string, uint32_t>& labels_to_number_of_points)
+void clean_up_artifacts(path input_data_path, path final_index_path_prefix, label_set all_labels)
 {
-    for (const auto &lbl : all_labels)
+    for (const auto &bl : all_labels)
     {
+        std::string lbl = std::to_string(bl);
         path curr_label_input_data_path(input_data_path + "_" + lbl);
         path curr_label_index_path(final_index_path_prefix + "_" + lbl);
         path curr_label_index_path_data(curr_label_index_path + ".data");
-        if (labels_to_number_of_points[lbl]<=1000) continue;
+        // if (labels_to_number_of_points[lbl]<=1000) continue;
 
-        std::remove(curr_label_index_path.c_str());
-        std::remove(curr_label_input_data_path.c_str());
-        std::remove(curr_label_index_path_data.c_str());
+        if(std::filesystem::exists(curr_label_index_path.c_str()))
+            std::remove(curr_label_index_path.c_str());
+        if(std::filesystem::exists(curr_label_input_data_path.c_str()))
+            std::remove(curr_label_input_data_path.c_str());
+        if(std::filesystem::exists(curr_label_index_path_data.c_str()))
+            std::remove(curr_label_index_path_data.c_str());
     }
 }
 
@@ -448,6 +457,7 @@ int main(int argc, char **argv)
     std::string universal_label;
     uint32_t num_threads, R, L, stitched_R;
     float alpha;
+    bool skip_building_stitched_graph=false;
 
     auto index_timer = std::chrono::high_resolution_clock::now();
     handle_args(argc, argv, data_type, input_data_path, final_index_path_prefix, label_data_path, universal_label,
@@ -455,101 +465,116 @@ int main(int argc, char **argv)
 
     path labels_file_to_use = final_index_path_prefix + "_label_formatted.txt";
     path labels_map_file = final_index_path_prefix + "_labels_map.txt";
-
-    convert_labels_string_to_int(label_data_path, labels_file_to_use, labels_map_file, universal_label);
-
-    // 2. parse label file and create necessary data structures
-    std::vector<label_set> point_ids_to_labels;
-    tsl::robin_map<std::string, uint32_t> labels_to_number_of_points;
+    path full_index_path_prefix = final_index_path_prefix + "_full";
     label_set all_labels;
 
-    std::tie(point_ids_to_labels, labels_to_number_of_points, all_labels) =
+    {
+        // TO SAVE Space
+        std::cout<<"cover labels string to int"<<std::endl;
+        convert_labels_string_to_int(label_data_path, labels_file_to_use, labels_map_file, universal_label);
+        std::cout<<"Done"<<std::endl;
+
+        // 2. parse label file and create necessary data structures
+        std::vector<label_set> point_ids_to_labels;
+        tsl::robin_map<std::string, uint32_t> labels_to_number_of_points;
+
+
+        std::tie(point_ids_to_labels, labels_to_number_of_points, all_labels) =
         diskann::parse_label_file(labels_file_to_use, universal_label);
+        // 3. for each label, make a separate data file
+        tsl::robin_map<std::string, std::vector<uint32_t>> label_id_to_orig_id_map;
+        uint32_t total_number_of_points = (uint32_t)point_ids_to_labels.size();
+        std::cout<<"A"<<std::endl;
 
-    // 3. for each label, make a separate data file
-    tsl::robin_map<std::string, std::vector<uint32_t>> label_id_to_orig_id_map;
-    uint32_t total_number_of_points = (uint32_t)point_ids_to_labels.size();
-
-#ifndef _WINDOWS
-    if (data_type == "uint8")
-        label_id_to_orig_id_map = diskann::generate_label_specific_vector_files<uint8_t>(
-            input_data_path, labels_to_number_of_points, point_ids_to_labels, all_labels);
-    else if (data_type == "int8")
-        label_id_to_orig_id_map = diskann::generate_label_specific_vector_files<int8_t>(
-            input_data_path, labels_to_number_of_points, point_ids_to_labels, all_labels);
-    else if (data_type == "float")
-        label_id_to_orig_id_map = diskann::generate_label_specific_vector_files<float>(
-            input_data_path, labels_to_number_of_points, point_ids_to_labels, all_labels);
-    else
-        throw;
-#else
-    if (data_type == "uint8")
-        label_id_to_orig_id_map = diskann::generate_label_specific_vector_files_compat<uint8_t>(
-            input_data_path, labels_to_number_of_points, point_ids_to_labels, all_labels);
-    else if (data_type == "int8")
-        label_id_to_orig_id_map = diskann::generate_label_specific_vector_files_compat<int8_t>(
-            input_data_path, labels_to_number_of_points, point_ids_to_labels, all_labels);
-    else if (data_type == "float")
-        label_id_to_orig_id_map = diskann::generate_label_specific_vector_files_compat<float>(
-            input_data_path, labels_to_number_of_points, point_ids_to_labels, all_labels);
-    else
-        throw;
-#endif
-
-    // 4. for each created data file, create a vanilla diskANN index
-    if (data_type == "uint8")
-        diskann::generate_label_indices<uint8_t>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
-                                                 num_threads);
-    else if (data_type == "int8")
-        diskann::generate_label_indices<int8_t>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
+    if(!skip_building_stitched_graph){
+    #ifndef _WINDOWS
+        if (data_type == "uint8")
+            label_id_to_orig_id_map = diskann::generate_label_specific_vector_files<uint8_t>(
+                input_data_path, labels_to_number_of_points, point_ids_to_labels, all_labels);
+        else if (data_type == "int8")
+            label_id_to_orig_id_map = diskann::generate_label_specific_vector_files<int8_t>(
+                input_data_path, labels_to_number_of_points, point_ids_to_labels, all_labels);
+        else if (data_type == "float")
+            label_id_to_orig_id_map = diskann::generate_label_specific_vector_files<float>(
+                input_data_path, labels_to_number_of_points, point_ids_to_labels, all_labels);
+        else
+            throw;
+    #else
+        if (data_type == "uint8")
+            label_id_to_orig_id_map = diskann::generate_label_specific_vector_files_compat<uint8_t>(
+                input_data_path, labels_to_number_of_points, point_ids_to_labels, all_labels);
+        else if (data_type == "int8")
+            label_id_to_orig_id_map = diskann::generate_label_specific_vector_files_compat<int8_t>(
+                input_data_path, labels_to_number_of_points, point_ids_to_labels, all_labels);
+        else if (data_type == "float")
+            label_id_to_orig_id_map = diskann::generate_label_specific_vector_files_compat<float>(
+                input_data_path, labels_to_number_of_points, point_ids_to_labels, all_labels);
+        else
+            throw;
+    #endif
+        std::cout<<"B"<<std::endl;
+        // 4. for each created data file, create a vanilla diskANN index
+        if (data_type == "uint8")
+            diskann::generate_label_indices<uint8_t>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
+                                                    num_threads);
+        else if (data_type == "int8")
+            diskann::generate_label_indices<int8_t>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
+                                                    num_threads);
+        else if (data_type == "float")
+            diskann::generate_label_indices<float>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
                                                 num_threads);
-    else if (data_type == "float")
-        diskann::generate_label_indices<float>(input_data_path, final_index_path_prefix, all_labels, R, L, alpha,
-                                               num_threads);
-    else
-        throw;
+        else
+            throw;
+    }
 
-    // 5. "stitch" the indices together
-    std::vector<std::vector<uint32_t>> stitched_graph;
-    tsl::robin_map<std::string, std::vector<uint32_t>> label_entry_points;
-    uint64_t stitched_graph_size;
+        // 5. "stitch" the indices together
+        std::vector<std::vector<uint32_t>> stitched_graph;
+        tsl::robin_map<std::string, std::vector<uint32_t>> label_entry_points;
+        uint64_t stitched_graph_size;
+        print_memory();
+        std::cout<<"C"<<std::endl;
+        if(!skip_building_stitched_graph){
+        if (data_type == "uint8")
+            stitched_graph_size =
+                stitch_label_indices<uint8_t>(final_index_path_prefix, total_number_of_points, all_labels,
+                                            labels_to_number_of_points, label_entry_points, label_id_to_orig_id_map, stitched_graph);
+        else if (data_type == "int8")
+            stitched_graph_size =
+                stitch_label_indices<int8_t>(final_index_path_prefix, total_number_of_points, all_labels,
+                                            labels_to_number_of_points, label_entry_points, label_id_to_orig_id_map, stitched_graph);
+        else if (data_type == "float")
+            stitched_graph_size =
+                stitch_label_indices<float>(final_index_path_prefix, total_number_of_points, all_labels,
+                                            labels_to_number_of_points, label_entry_points, label_id_to_orig_id_map, stitched_graph);
+        else
+            throw;
+        }
+        print_memory();
+        // 5a. save the stitched graph to disk
+        if(!skip_building_stitched_graph)
+        save_full_index(full_index_path_prefix, input_data_path, stitched_graph_size, stitched_graph, label_entry_points,
+                        universal_label, labels_file_to_use);
+        // load_full_index(full_index_path_prefix,input_data_path,stitched_graph_size,stitched_graph, label_entry_points,universal_label,labels_file_to_use);
 
-    if (data_type == "uint8")
-        std::tie(stitched_graph, stitched_graph_size) =
-            stitch_label_indices<uint8_t>(final_index_path_prefix, total_number_of_points, all_labels,
-                                          labels_to_number_of_points, label_entry_points, label_id_to_orig_id_map);
-    else if (data_type == "int8")
-        std::tie(stitched_graph, stitched_graph_size) =
-            stitch_label_indices<int8_t>(final_index_path_prefix, total_number_of_points, all_labels,
-                                         labels_to_number_of_points, label_entry_points, label_id_to_orig_id_map);
-    else if (data_type == "float")
-        std::tie(stitched_graph, stitched_graph_size) =
-            stitch_label_indices<float>(final_index_path_prefix, total_number_of_points, all_labels,
-                                        labels_to_number_of_points, label_entry_points, label_id_to_orig_id_map);
-    else
-        throw;
-    path full_index_path_prefix = final_index_path_prefix + "_full";
-    // 5a. save the stitched graph to disk
-    save_full_index(full_index_path_prefix, input_data_path, stitched_graph_size, stitched_graph, label_entry_points,
-                    universal_label, labels_file_to_use);
-    // load_full_index(full_index_path_prefix,input_data_path,stitched_graph_size,stitched_graph, label_entry_points,universal_label,labels_file_to_use);
-
+    print_memory();
+    }
+    std::cout<<"D"<<std::endl;    
+    print_memory();
+    // TODO: ADD Clean up
 
     // 6. run a prune on the stitched index, and save to disk
     if (data_type == "uint8")
-        prune_and_save<uint8_t>(final_index_path_prefix, full_index_path_prefix, input_data_path, stitched_graph,
-                                stitched_R, label_entry_points, universal_label, labels_file_to_use, num_threads);
+        prune_and_save<uint8_t>(final_index_path_prefix, full_index_path_prefix, input_data_path, stitched_R, num_threads);
     else if (data_type == "int8")
-        prune_and_save<int8_t>(final_index_path_prefix, full_index_path_prefix, input_data_path, stitched_graph,
-                               stitched_R, label_entry_points, universal_label, labels_file_to_use, num_threads);
+        prune_and_save<int8_t>(final_index_path_prefix, full_index_path_prefix, input_data_path, stitched_R, num_threads);
     else if (data_type == "float")
-        prune_and_save<float>(final_index_path_prefix, full_index_path_prefix, input_data_path, stitched_graph,
-                              stitched_R, label_entry_points, universal_label, labels_file_to_use, num_threads);
+        prune_and_save<float>(final_index_path_prefix, full_index_path_prefix, input_data_path, stitched_R,  num_threads);
     else
         throw;
 
+    print_memory();
     std::chrono::duration<double> index_time = std::chrono::high_resolution_clock::now() - index_timer;
     std::cout << "pruned/stitched graph generated in " << index_time.count() << " seconds" << std::endl;
 
-    clean_up_artifacts(input_data_path, final_index_path_prefix, all_labels,labels_to_number_of_points);
+    clean_up_artifacts(input_data_path, final_index_path_prefix, all_labels);
 }
