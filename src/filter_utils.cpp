@@ -102,6 +102,51 @@ void write_labels(char* filename, int64_t* row_index, int32_t* col_index, uint32
     writer.close();
 }
 
+void load_sparse_matrix(const std::string &filename, std::vector<std::vector<std::string>> &filters){
+    int64_t *row_index = nullptr;
+    int32_t *col_index = nullptr;
+    float *filter_value = nullptr;
+    int64_t rows;
+    int64_t cols;
+    int64_t nnz;
+
+    std::ifstream reader(filename,std::ios::binary|std::ios::in);
+    reader.read((char*)&rows,sizeof(int64_t));
+    reader.read((char*)&cols,sizeof(int64_t));
+    reader.read((char*)&nnz,sizeof(int64_t));
+    //std::cout<<"Matrix size: ("<<rows<<", "<<cols<<"), non-zeros elements: "<<nnz<<std::endl;
+    if (row_index!=nullptr){
+        delete[] row_index;
+    }
+    row_index = new int64_t[rows+1];
+    if (col_index!=nullptr){
+        delete[] col_index;
+    }
+    if (filter_value!=nullptr){
+        delete[] filter_value;
+    }
+    col_index = new int32_t[nnz];
+    filter_value = new float[nnz];
+    reader.read((char*)row_index,sizeof(int64_t)*(rows+1));
+    reader.read((char*)col_index,sizeof(int32_t)*nnz);
+    reader.read((char*)filter_value,sizeof(float)*nnz);
+    reader.close();
+    filters.clear();
+    for (int i=0;i<rows;i++){
+        std::vector<std::string> one_row;
+        for (int j=row_index[i];j<row_index[i+1]-1;j++){
+            one_row.emplace_back(std::to_string(col_index[j]+1));
+        }
+        one_row.emplace_back(std::to_string(col_index[row_index[i+1]-1]+1));
+        filters.emplace_back(one_row);
+    }
+    delete[] row_index;
+    delete[] col_index;
+    delete[] filter_value;
+}
+
+
+
 namespace diskann
 {
 /*

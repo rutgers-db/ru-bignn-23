@@ -81,6 +81,7 @@ class AbstractIndex
     std::pair<uint32_t, uint32_t> search_with_multi_filters(const DataType &query, const std::vector<std::string> &query_filters,
                                                             const size_t K, const uint32_t L, IndexType *indices,
                                                             float *distances);
+    void convert_filters();
 
     template <typename data_type, typename tag_type> int insert_point(const data_type *point, const tag_type tag);
 

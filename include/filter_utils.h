@@ -61,6 +61,7 @@ void read_sparse_matrix(char* filename,int64_t& rows, int64_t& cols, int64_t& nn
 
 void write_labels(char* filename, int64_t* row_index, int32_t* col_index, uint32_t nd);
 
+void load_sparse_matrix(const std::string &filename, std::vector<std::vector<std::string>> &filters);
 namespace diskann
 {
 template <typename T>
