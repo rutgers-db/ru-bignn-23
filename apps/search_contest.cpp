@@ -227,7 +227,8 @@ int main(int argc, char **argv)
         optional_configs.add_options()("num_threads,T",
                                        po::value<uint32_t>(&num_threads)->default_value(omp_get_num_procs()),
                                        program_options_utils::NUMBER_THREADS_DESCRIPTION);
-        optional_configs.add_options()("data_type", program_options_utils::DATA_TYPE_DESCRIPTION);
+        optional_configs.add_options()("data_type", po::value<std::string>(&data_type)->default_value("uint8"),
+                                       program_options_utils::DATA_TYPE_DESCRIPTION);
         optional_configs.add_options()("recall_at,K", program_options_utils::NUMBER_OF_RESULTS_DESCRIPTION);
         optional_configs.add_options()("runs", po::value<uint32_t>(&runs)->default_value(1),
                                        program_options_utils::NUMBER_OF_RESULTS_DESCRIPTION);
@@ -271,6 +272,11 @@ int main(int argc, char **argv)
         {
             return search_memory_index<uint8_t, uint32_t>(metric, index_path_prefix, query_file, num_threads, K, Lvec,
                                                           query_filters_file, result_path_prefix, dataset, runs);
+        }
+        else if (data_type == std::string("float"))
+        {
+            return search_memory_index<float, uint32_t>(metric, index_path_prefix, query_file, num_threads, K, Lvec,
+                                                        query_filters_file, result_path_prefix, dataset, runs);
         }
     }
     catch (std::exception &e)
