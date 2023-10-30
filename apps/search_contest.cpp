@@ -27,8 +27,8 @@
 namespace po = boost::program_options;
 using std::string;
 
-void save_metadata(const std::string &meta_result_path, const size_t run_count, const string dataset,
-                   const std::vector<double> &search_times)
+void save_metadata(const std::string &meta_result_path, const string output_bin_result_path, const uint32_t L,
+                   const uint32_t run_count, const string dataset, const std::vector<double> &search_times)
 {
     string search_type_ = "knn_filtered";
     string distance_ = "euclidean";
@@ -43,9 +43,10 @@ void save_metadata(const std::string &meta_result_path, const size_t run_count, 
     file.open(meta_result_path, std::ios_base::app);
     if (file)
     {
-        file << build_time_ << "," << index_size_ << "," << algo_ << "," << dataset << ","
-             << std::to_string(best_search_time_) << "," << algo_ << "," << run_count << "," << distance_ << ","
-             << search_type_ << "," << count_ << ",";
+        file << output_bin_result_path << "," << build_time_ << "," << index_size_ << "," << algo_ << "," << dataset
+             << "," << std::to_string(best_search_time_) << "," << algo_ << ","
+             << "L" + std::to_string(L) << "," << run_count << "," << distance_ << "," << search_type_ << "," << count_
+             << ",";
     }
     for (size_t i = 0; i < search_times.size() - 1; i++)
     {
@@ -75,7 +76,7 @@ template <typename T, typename LabelT = uint32_t>
 int search_memory_index(diskann::Metric &metric, const std::string &index_path, const std::string &query_file,
                         const uint32_t num_threads, const uint32_t recall_at, const std::vector<uint32_t> &Lvec,
                         const std::string &query_filter_file, const std::string &result_path_prefix,
-                        const string &dataset)
+                        const string &dataset, const uint32_t runs)
 {
     using TagT = uint32_t;
     // Load the query file
@@ -131,8 +132,6 @@ int search_memory_index(diskann::Metric &metric, const std::string &index_path, 
 
     double best_recall = 0.0;
 
-    std::vector<double> search_times;
-
     for (uint32_t test_id = 0; test_id < Lvec.size(); test_id++)
     {
         uint32_t L = Lvec[test_id];
@@ -142,37 +141,50 @@ int search_memory_index(diskann::Metric &metric, const std::string &index_path, 
             continue;
         }
 
-        query_result_ids[test_id].resize(recall_at * query_num);
-        query_result_dists[test_id].resize(recall_at * query_num);
-        std::vector<T *> res = std::vector<T *>();
-        auto start = std::chrono::high_resolution_clock::now();
-        omp_set_num_threads(num_threads);
-#pragma omp parallel for schedule(dynamic, 1)
-        for (int64_t i = 0; i < (int64_t)query_num; i++)
-        {
-            auto qs = std::chrono::high_resolution_clock::now();
+        std::vector<double> search_times;
 
-            std::vector<std::string> raw_filter = query_filters[i];
-            auto retval = index->search_with_multi_filters(query + i * query_aligned_dim, raw_filter, recall_at, L,
-                                                           query_result_ids[test_id].data() + i * recall_at,
-                                                           query_result_dists[test_id].data() + i * recall_at);
+        for (uint32_t run_count = 0; run_count < runs; run_count++)
+        {
+            std::cout << "Run " << run_count << "/" << runs << std::endl;
+
+            query_result_ids[test_id].resize(recall_at * query_num);
+            query_result_dists[test_id].resize(recall_at * query_num);
+            std::vector<T *> res = std::vector<T *>();
+            auto start = std::chrono::high_resolution_clock::now();
+            omp_set_num_threads(num_threads);
+#pragma omp parallel for schedule(dynamic, 1)
+            for (int64_t i = 0; i < (int64_t)query_num; i++)
+            {
+                auto qs = std::chrono::high_resolution_clock::now();
+
+                std::vector<std::string> raw_filter = query_filters[i];
+                auto retval = index->search_with_multi_filters(query + i * query_aligned_dim, raw_filter, recall_at, L,
+                                                               query_result_ids[test_id].data() + i * recall_at,
+                                                               query_result_dists[test_id].data() + i * recall_at);
+            }
+            std::chrono::duration<double> diff = std::chrono::high_resolution_clock::now() - start;
+            auto search_time = diff.count();
+            std::cout << "Search with L=" << L << ", time=" << search_time << std::endl;
+            search_times.emplace_back(search_time);
+            if (result_path_prefix != "")
+            {
+                std::string cur_result_path_prefix = result_path_prefix + "_L" + std::to_string(L);
+                std::string cur_result_path = cur_result_path_prefix + "_idx_uint32.bin";
+                diskann::save_bin<uint32_t>(cur_result_path, query_result_ids[test_id].data(), query_num, recall_at);
+            }
         }
-        std::chrono::duration<double> diff = std::chrono::high_resolution_clock::now() - start;
-        auto search_time = diff.count();
-        std::cout << "Search with L=" << L << ", time=" << search_time << std::endl;
-        search_times.emplace_back(search_time);
         if (result_path_prefix != "")
         {
-            std::string cur_result_path_prefix = result_path_prefix + "_L" + std::to_string(L);
-            std::string cur_result_path = cur_result_path_prefix + "_idx_uint32.bin";
-            diskann::save_bin<uint32_t>(cur_result_path, query_result_ids[test_id].data(), query_num, recall_at);
+            std::string output_bin_result_path = result_path_prefix + "_L" + std::to_string(L);
+            output_bin_result_path = output_bin_result_path + "_idx_uint32.bin";
+            std::string cur_result_meta_path = result_path_prefix + "_search_metadata.txt";
+            save_metadata(cur_result_meta_path, output_bin_result_path, L, runs, dataset, search_times);
         }
     }
 
     // TODO: save search metadata to file
     // store search_metadata for contest store_results() to hdf5 file
-    std::string cur_result_meta_path = result_path_prefix + "_search_metadata.txt";
-    save_metadata(cur_result_meta_path, Lvec.size(), dataset, search_times);
+
     diskann::aligned_free(query);
     return 0;
 }
@@ -181,7 +193,7 @@ int main(int argc, char **argv)
 {
     std::string data_type, dist_fn, index_path_prefix, query_file, gt_file, label_type, query_filters_file,
         result_path_prefix, dataset;
-    uint32_t num_threads, K;
+    uint32_t num_threads, K, runs;
     std::vector<uint32_t> Lvec;
 
     // Default paramters
@@ -217,6 +229,8 @@ int main(int argc, char **argv)
                                        program_options_utils::NUMBER_THREADS_DESCRIPTION);
         optional_configs.add_options()("data_type", program_options_utils::DATA_TYPE_DESCRIPTION);
         optional_configs.add_options()("recall_at,K", program_options_utils::NUMBER_OF_RESULTS_DESCRIPTION);
+        optional_configs.add_options()("runs", po::value<uint32_t>(&runs)->default_value(1),
+                                       program_options_utils::NUMBER_OF_RESULTS_DESCRIPTION);
         optional_configs.add_options()("dataset", po::value<std::string>(&dataset)->default_value("yfcc-10M"),
                                        program_options_utils::DATA_TYPE_DESCRIPTION);
         desc.add(required_configs).add(optional_configs);
@@ -256,7 +270,7 @@ int main(int argc, char **argv)
         if (data_type == std::string("uint8"))
         {
             return search_memory_index<uint8_t, uint32_t>(metric, index_path_prefix, query_file, num_threads, K, Lvec,
-                                                          query_filters_file, result_path_prefix, dataset);
+                                                          query_filters_file, result_path_prefix, dataset, runs);
         }
     }
     catch (std::exception &e)

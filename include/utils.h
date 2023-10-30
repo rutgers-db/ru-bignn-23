@@ -696,18 +696,18 @@ inline size_t save_bin(const std::string &filename, T *data, size_t npts, size_t
     std::ofstream writer;
     open_file_to_write(writer, filename);
 
-    diskann::cout << "Writing bin: " << filename.c_str() << std::endl;
+    // diskann::cout << "Writing bin: " << filename.c_str() << std::endl;
     writer.seekp(offset, writer.beg);
     int npts_i32 = (int)npts, ndims_i32 = (int)ndims;
     size_t bytes_written = npts * ndims * sizeof(T) + 2 * sizeof(uint32_t);
     writer.write((char *)&npts_i32, sizeof(int));
     writer.write((char *)&ndims_i32, sizeof(int));
-    diskann::cout << "bin: #pts = " << npts << ", #dims = " << ndims << ", size = " << bytes_written << "B"
-                  << std::endl;
+    // diskann::cout << "bin: #pts = " << npts << ", #dims = " << ndims << ", size = " << bytes_written << "B"
+    //               << std::endl;
 
     writer.write((char *)data, npts * ndims * sizeof(T));
     writer.close();
-    diskann::cout << "Finished writing bin." << std::endl;
+    diskann::cout << "Finished writing bin: "<< filename.c_str()  << std::endl;
     return bytes_written;
 }
 
