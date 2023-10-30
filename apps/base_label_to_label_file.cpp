@@ -23,7 +23,7 @@ namespace po = boost::program_options;
 using std::cout;
 using std::endl;
 
-int main()
+int main(int argc, char *argv[])
 {
 
     int64_t *row_index = nullptr;
@@ -32,13 +32,13 @@ int main()
     int64_t rows;
     int64_t cols;
     int64_t nnz;
-
-    read_sparse_matrix("/home/ubuntu/big-ann-benchmarks/data/yfcc100M/base.metadata.10M.spmat", rows, cols, nnz,
-                       row_index, col_index, filter_value);
+    // /home/ubuntu/big-ann-benchmarks/data/random-filter100000/data_metadata_100000_50
+    cout << "transfer label file :" << argv[1] << " to " << argv[2] << endl;
+    read_sparse_matrix(argv[1], rows, cols, nnz, row_index, col_index, filter_value);
     std::cout << "Matrix size: (" << rows << ", " << cols << "), non-zeros elements: " << nnz << std::endl;
 
-    std::string save_to_label_file_path = "/home/ubuntu/label_file_base_yfcc10m.txt";
-    write_labels(save_to_label_file_path.c_str(), row_index, col_index, rows);
+    // std::string save_to_label_file_path = "/home/ubuntu/label_file_base_yfcc10m.txt";
+    write_labels(argv[2], row_index, col_index, rows);
 
     delete[] row_index;
     delete[] col_index;
