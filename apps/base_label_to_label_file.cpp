@@ -33,22 +33,12 @@ int main()
     int64_t cols;
     int64_t nnz;
 
-    read_sparse_matrix("/home/ubuntu/big-ann-benchmarks/data/yfcc100M/query.metadata.public.100K.spmat", rows, cols,
-                       nnz, row_index, col_index, filter_value);
+    read_sparse_matrix("/home/ubuntu/big-ann-benchmarks/data/yfcc100M/base.metadata.10M.spmat", rows, cols, nnz,
+                       row_index, col_index, filter_value);
     std::cout << "Matrix size: (" << rows << ", " << cols << "), non-zeros elements: " << nnz << std::endl;
 
-    std::vector<std::vector<std::string>> filters;
-    load_sparse_matrix("/home/ubuntu/big-ann-benchmarks/data/yfcc100M/query.metadata.public.100K.spmat", filters);
-
-    cout << filters.size() << endl;
-    for (int i = 0; i < 2; i++)
-    {
-        for (auto ele : filters.at(i))
-        {
-            cout << ele << ",";
-        }
-        cout << endl;
-    }
+    std::string save_to_label_file_path = "/home/ubuntu/label_file_base_yfcc10m.txt";
+    write_labels(save_to_label_file_path.c_str(), row_index, col_index, rows);
 
     delete[] row_index;
     delete[] col_index;

@@ -91,7 +91,7 @@ void read_sparse_matrix(char* filename,int64_t& rows, int64_t& cols, int64_t& nn
     reader.close();
 }
 
-void write_labels(char* filename, int64_t* row_index, int32_t* col_index, uint32_t nd){
+void write_labels(const char* filename, int64_t* row_index, int32_t* col_index, uint32_t nd){
     std::ofstream writer(filename,std::ios::out);
     for (int i=0;i<nd;i++){
         for (int j=row_index[i];j<row_index[i+1]-1;j++){
