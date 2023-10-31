@@ -549,6 +549,7 @@ int main(int argc, char **argv)
         else
             throw;
         }
+        std::cout<<"stitched_graph_size: "<<stitched_graph_size<<std::endl;
         print_memory();
         // 5a. save the stitched graph to disk
         if(!skip_building_stitched_graph)
