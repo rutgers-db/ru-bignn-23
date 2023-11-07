@@ -62,6 +62,12 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
                             const bool pq_dist_build = false, const size_t num_pq_chunks = 0,
                             const bool use_opq = false);
 
+    // DISKANN_DLLEXPORT Index(Metric m, const size_t dim, const size_t max_points = 1, const bool dynamic_index = false,
+    //                         const bool enable_tags = false, const bool concurrent_consolidate = false,
+    //                         const bool pq_dist_build = false, const size_t num_pq_chunks = 0,
+    //                         const bool use_opq = false, const size_t num_frozen_pts = 0,
+    //                         const bool init_data_store = true);
+
     DISKANN_DLLEXPORT Index(const IndexConfig &index_config, std::unique_ptr<AbstractDataStore<T>> data_store,
                             std::unique_ptr<AbstractGraphStore> graph_store);
 
@@ -148,7 +154,7 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
 
     template <typename IndexType>
     DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> search_with_multi_filters(const T *query, const std::vector<std::string> &query_filters,
-                                                                        const size_t K, const uint32_t L,
+                                                                        const size_t &K, const uint32_t &L,
                                                                         IndexType *indices, float *distances);
 
     // Will fail if tag already in the index or if tag=0.
@@ -216,8 +222,8 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
                                                                const uint32_t L, std::any &indices,
                                                                float *distances) override;
     virtual std::pair<uint32_t, uint32_t> _search_with_multi_filters(const DataType &query,
-                                                               const std::vector<std::string> &query_filters, const size_t K,
-                                                               const uint32_t L, std::any &indices,
+                                                               const std::vector<std::string> &query_filters, const size_t &K,
+                                                               const uint32_t &L, std::any &indices,
                                                                float *distances) override;                                                               
 
     virtual int _insert_point(const DataType &data_point, const TagType tag) override;

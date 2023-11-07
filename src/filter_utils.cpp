@@ -347,10 +347,6 @@ parse_label_file_return_values parse_label_file(path label_data_path, std::strin
     line_cnt = 0;
     while (std::getline(label_data_stream, line))
     {
-        if (line_cnt%1000000==0){
-            std::cout<<line_cnt<<std::endl;
-            print_memory();
-        }
         std::istringstream current_labels_comma_separated(line);
         label_set current_labels;
 

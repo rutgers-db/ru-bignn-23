@@ -79,7 +79,7 @@ class AbstractIndex
                                                       float *distances);
     template <typename IndexType>
     std::pair<uint32_t, uint32_t> search_with_multi_filters(const DataType &query, const std::vector<std::string> &query_filters,
-                                                            const size_t K, const uint32_t L, IndexType *indices,
+                                                            const size_t &K, const uint32_t &L, IndexType *indices,
                                                             float *distances);
     void convert_filters();
 
@@ -109,7 +109,7 @@ class AbstractIndex
                                                                const size_t K, const uint32_t L, std::any &indices,
                                                                float *distances) = 0;
     virtual std::pair<uint32_t, uint32_t> _search_with_multi_filters(const DataType &query, const std::vector<std::string> &query_filters,
-                                                            const size_t K, const uint32_t L, std::any &indices,
+                                                            const size_t &K, const uint32_t &L, std::any &indices,
                                                             float *distances) = 0;
     virtual int _insert_point(const DataType &data_point, const TagType tag) = 0;
     virtual int _lazy_delete(const TagType &tag) = 0;
